@@ -1,0 +1,124 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python3 tools/memory_tools.py search:*)",
+      "Bash(python3 tools/memory_tools.py stale)",
+      "Bash(python3 tools/memory_tools.py dupes)",
+      "Bash(python3 tools/memory_tools.py tier0)",
+      "Bash(python3 tools/memory_index.py)",
+      "Bash(python3 tools/memory_lint.py)",
+      "Bash(python3 tools/memory_verify.py)",
+      "Bash(python3 tools/memory_verify.py --quick)",
+      "Bash(python3 tools/leak_scan.py)",
+      "Bash(python3 tools/agent_gen.py --check)",
+      "Bash(python3 tests/run_all.py)",
+      "Bash(bash .claude/hooks/load-persona.sh check 8)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 1 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 2 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 3 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 4 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 5 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 6 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 7 8" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-persona.sh\" 8 8" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/memory_index.py\" --quiet </dev/null >/dev/null 2>>\"$CLAUDE_PROJECT_DIR/.claude/state/hook-errors.log\" || true" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" check" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" check" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/git-guard.py\"" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/heredoc-guard.py\"" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/stamp-guard.py\"" }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-model-guard.py\"" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" mark" }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" mark" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" stop" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" stop" }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/subagent-core.py\"" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-log.py\"" }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-log.py\"" }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-event-log.py\"" }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-event-log.py\"" }
+        ]
+      }
+    ]
+  }
+}

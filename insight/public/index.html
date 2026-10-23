@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>INSIGHT</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="frame">
+  <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
+
+  <header class="topbar">
+    <span class="brand" id="brand">AGENT//INSIGHT</span>
+    <span class="ttl" id="sessionTitle">— acquiring transcript —</span>
+    <span class="spacer"></span>
+    <span class="chip" id="linkState">LINK<b>·</b><em>—</em></span>
+    <span class="chip" id="clock">--:--:--</span>
+  </header>
+
+  <main class="grid">
+
+    <!-- ── left column ───────────────────────────────────────────────── -->
+    <section class="col left">
+      <div class="panel" id="p-ledger">
+        <h2>CONTEXT &amp; BUDGET<span class="hz"></span><span class="stamp" id="ledgerStamp"></span></h2>
+        <div class="ctxwrap first">
+          <div class="ctxlabel"><span>CONTEXT WINDOW</span><b id="ctxPct">0%</b></div>
+          <div class="meter"><i id="ctxBar"></i></div>
+          <div class="sub" id="ctxSub">—</div>
+        </div>
+        <div class="ctxwrap">
+          <div class="ctxlabel"><span id="planLabel">BUDGET</span><b id="planStamp"></b></div>
+          <div class="plan" id="plan"></div>
+        </div>
+      </div>
+
+      <!-- the newest lessons above the skills; hover = trigger question, click = full lesson -->
+      <div class="panel" id="p-lessons">
+        <h2>LESSONS<span class="hz"></span><span class="stamp" id="lessonsStamp"></span></h2>
+        <div class="lessons" id="lessons"></div>
+      </div>
+
+      <div class="panel grow" id="p-skills">
+        <h2>SKILLS ENGAGED<span class="hz"></span></h2>
+        <div class="skills" id="skills"></div>
+      </div>
+    </section>
+
+    <!-- ── centre: the gate ──────────────────────────────────────────── -->
+    <section class="col centre">
+      <div class="alarms" id="alarms"></div>
+      <div class="gate">
+        <div class="gaterow">
+        <div class="tiercards" id="tierCallouts"></div>
+        <!-- ring and its readout share one column, so the text can never sit over the tier cards -->
+        <div class="gatecol">
+        <div class="gatebox">
+          <img class="ring core"  src="assets/ring_core.png"  alt="">
+          <img class="ring outer" src="assets/ring_outer.png" alt="">
+          <img class="ring inner" src="assets/ring_inner.png" alt="">
+          <div class="avatar" id="gAvatar" aria-hidden="true">A</div>
+          <svg class="leaders" id="leaders" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div class="smoke" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="gateread">
+          <div class="gmodel" id="gModel">—</div>
+          <div class="gstate" id="gState">STANDBY</div>
+          <div class="gsub"   id="gSub">—</div>
+          <div class="gatering-label" id="gRingLabel">NOMINAL</div>
+        </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="panel" id="p-activity">
+        <h2>ACTIVITY<span class="hz"></span><span class="stamp">tool calls per push</span></h2>
+        <div class="statline" id="statline"></div>
+        <div class="sparkwrap"><canvas id="spark" width="900" height="70"></canvas></div>
+      </div>
+
+      <div class="panel" id="p-team">
+        <h2>TEAM<span class="hz"></span><span class="stamp" id="teamStamp"></span></h2>
+        <div class="team" id="team"></div>
+      </div>
+    </section>
+
+    <!-- ── right column ──────────────────────────────────────────────── -->
+    <section class="col right">
+      <div class="panel grow" id="p-graph">
+        <h2>TEAM GRAPH<span class="hz"></span><span class="stamp" id="graphStamp"></span></h2>
+        <div class="tgraph" id="tgraph">
+          <canvas class="tgfx" id="tgfx" aria-hidden="true"></canvas>
+          <svg class="tgsvg" id="tgsvg" aria-label="team graph"></svg>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── bottom strips ───────────────────────────────────────────────── -->
+  <section class="strip">
+    <div class="panel" id="p-tools">
+      <h2>TOOL STREAM<span class="hz"></span></h2>
+      <div class="tools" id="tools"></div>
+    </div>
+    <div class="panel" id="p-files">
+      <h2>FILES &amp; FOLDERS<span class="hz"></span></h2>
+      <div class="files" id="files"></div>
+    </div>
+    <div class="panel" id="p-errors">
+      <h2>FAULTS<span class="hz"></span></h2>
+      <div class="errors" id="errors"></div>
+    </div>
+  </section>
+
+  <footer class="botbar">
+    <span id="sessions"></span>
+  </footer>
+</div>
+<div id="tip" hidden></div>
+<script src="app.js"></script>
+<script src="graph.js"></script>
+<script src="agent.js"></script>
+<script src="lesson.js"></script>
+</body>
+</html>

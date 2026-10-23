@@ -1,0 +1,10 @@
+# LF everywhere in the repo, whatever a member's core.autocrlf says: bash fails on CRLF scripts ("$'\r': command
+# not found"), and CRLF in memory files makes every line of a diff change.
+* text=auto eol=lf
+*.sh  text eol=lf
+*.py  text eol=lf
+*.mjs text eol=lf
+*.js  text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
+*.png binary

@@ -1,0 +1,17 @@
+{
+  "note": "ESTIMATE. $ per 1,000,000 tokens, edited by hand - Insight never queries Anthropic for prices. Cache write defaults to 1.25x input (5-minute TTL; a 1-hour TTL is 2x) and cache read to 0.1x input when a model does not name its own. Confirm against current published pricing before trusting a dollar figure.",
+  "updated": "2026-09-13",
+  "models": {
+    "claude-opus-5": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheRead": 1.5 },
+    "claude-sonnet-5": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheRead": 0.3 },
+    "claude-fable-5-1": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheRead": 0.3 },
+    "claude-haiku-4-5-20251001": { "input": 0.8, "output": 4, "cacheWrite": 1.0, "cacheRead": 0.08 }
+  },
+  "families": {
+    "opus": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheRead": 1.5 },
+    "sonnet": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheRead": 0.3 },
+    "fable": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheRead": 0.3 },
+    "haiku": { "input": 0.8, "output": 4, "cacheWrite": 1.0, "cacheRead": 0.08 }
+  },
+  "default": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheRead": 0.3 }
+}

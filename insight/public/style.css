@@ -1,0 +1,522 @@
+/* Insight - bright green on black.
+   Semantic colours survive the palette: amber = warning, red = critical, gold = tier 0. Everything
+   that used to be cyan is now green. The ring PNGs are teal renders; .ring/.cnr carry a hue-rotate
+   so the art agrees with the text without a re-render (see blender-insight-ui.py to re-bake). */
+:root{
+  --fs:1; --tcs:1;   /* text scale: app.js applyScale() sets --fs from the window size; fitTierCards() sets --tcs per tier card */
+  --void:#000000; --hull:#000000; --plate:#020803; --plate2:#041006;
+  --line:#1d7a2e; --line2:#125220;
+  --cyan:#33e05a; --cyan-hot:#39ff14; --cyan-dim:#1f9a3a;
+  --green:#39ff14; --amber:#e0b23a; --red:#ff5a3c;
+  --ink:#9dff8a; --ink-dim:#4fbf5a;
+  --mono:"Consolas","DejaVu Sans Mono",ui-monospace,monospace;
+  --hue:-72deg;                 /* teal art -> green art */
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--void); color:var(--ink);
+  font:calc(12.5px*var(--fs))/1.45 var(--mono); letter-spacing:.05em;
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, #061a08 0%, #020802 55%, #000 100%),
+    repeating-linear-gradient(0deg, rgba(57,255,20,.035) 0 1px, transparent 1px 3px);
+  overflow:hidden;
+}
+.spacer{flex:1}
+
+/* ── outer frame ─────────────────────────────────────────────────────── */
+.frame{
+  position:fixed; inset:10px; display:flex; flex-direction:column; gap:8px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(3,16,5,.7), rgba(0,0,0,.85));
+  clip-path:polygon(26px 0,calc(100% - 26px) 0,100% 26px,100% calc(100% - 26px),calc(100% - 26px) 100%,26px 100%,0 calc(100% - 26px),0 26px);
+  padding:8px 12px 10px;
+}
+.cnr{position:absolute;width:92px;height:92px;background:url(assets/corner.png) no-repeat center/contain;pointer-events:none;opacity:.95;
+  filter:hue-rotate(var(--hue)) saturate(1.25)}
+.cnr.tl{top:-6px;left:-6px}
+.cnr.tr{top:-6px;right:-6px;transform:scaleX(-1)}
+.cnr.bl{bottom:-6px;left:-6px;transform:scaleY(-1)}
+.cnr.br{bottom:-6px;right:-6px;transform:scale(-1,-1)}
+
+/* ── bars ────────────────────────────────────────────────────────────── */
+.topbar,.botbar{display:flex;align-items:center;gap:14px;flex:none}
+.topbar{padding-bottom:6px;border-bottom:1px solid var(--line2)}
+.botbar{padding-top:6px;border-top:1px solid var(--line2);font-size:calc(10.5px*var(--fs));color:var(--ink-dim)}
+.brand{color:var(--cyan-hot);font-weight:700;letter-spacing:.24em;text-shadow:0 0 12px rgba(57,255,20,.5)}
+.ttl{color:var(--ink-dim);text-transform:uppercase;letter-spacing:.14em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:46vw}
+.chip{border:1px solid var(--line);background:rgba(4,20,7,.7);padding:2px 10px;color:var(--cyan);letter-spacing:.16em;
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)}
+.chip b{color:var(--ink-dim);margin:0 5px}
+.chip em{font-style:normal;color:var(--cyan-hot)}
+.chip.bad em{color:var(--red)}
+
+/* ── layout ──────────────────────────────────────────────────────────── */
+/* the right column is the TEAM GRAPH alone, so it is wider */
+.grid{flex:1;display:grid;grid-template-columns:minmax(260px,.85fr) minmax(560px,1.9fr) minmax(380px,1.35fr);gap:8px;min-height:0}
+.col{display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
+.strip{flex:none;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) minmax(0,1fr);gap:8px;height:172px}
+.strip>.panel{min-width:0}   /* nowrap rows set a min-content width and pushed FAULTS off the right edge at 1366 */
+
+.panel{
+  position:relative;border:1px solid var(--line2);background:linear-gradient(180deg,rgba(2,10,4,.95),rgba(0,0,0,.95));
+  padding:7px 10px 9px;min-height:0;display:flex;flex-direction:column;
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
+}
+.panel.grow{flex:1;min-height:0}
+.panel h2{
+  display:flex;align-items:center;gap:9px;margin:0 0 7px;font-size:calc(10.5px*var(--fs));font-weight:600;
+  color:var(--cyan);letter-spacing:.26em;text-transform:uppercase;flex:none;
+}
+.panel h2::before{content:"";width:7px;height:7px;background:var(--amber);box-shadow:0 0 8px var(--amber);flex:none}
+.hz{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.panel h2 .stamp{font-size:calc(9px*var(--fs));letter-spacing:.1em;color:var(--ink-dim);font-weight:400;text-transform:none}
+
+/* ── CONTEXT & BUDGET ─ */
+.ctxwrap{margin-top:8px;padding-top:8px;border-top:1px solid var(--line2)}
+.ctxwrap.first{margin-top:0;padding-top:0;border-top:0}
+.ctxlabel{display:flex;justify-content:space-between;font-size:calc(10px*var(--fs));color:var(--ink-dim);letter-spacing:.16em}
+.ctxlabel b{color:var(--cyan-hot)}
+.meter{height:8px;border:1px solid var(--line);background:#010601;margin-top:4px;padding:1px}
+.meter.big{height:13px}
+.meter i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan-dim),var(--cyan-hot));
+  box-shadow:0 0 10px rgba(57,255,20,.6);transition:width .45s ease}
+.meter i.warn{background:linear-gradient(90deg,#8a6a16,var(--amber));box-shadow:0 0 10px rgba(224,178,58,.6)}
+.meter i.crit{background:linear-gradient(90deg,#7a2a1c,var(--red));box-shadow:0 0 10px rgba(255,90,60,.6)}
+.sub{font-size:calc(10px*var(--fs));color:var(--ink-dim);margin-top:3px}
+.plan .planrow{margin-top:6px}
+.plan .planrow:first-child{margin-top:3px}
+.plan .ctxlabel b small{color:var(--ink-dim);font-size:calc(9px*var(--fs));letter-spacing:.08em;margin-left:6px}
+.plan .ctxlabel b.warn{color:var(--amber)} .plan .ctxlabel b.crit{color:#ffb9a8}
+#planStamp{font-weight:400;font-size:calc(9px*var(--fs));letter-spacing:.1em;color:var(--ink-dim)}
+#planStamp.bad{color:var(--amber)}
+.plan .breakdown{font-size:calc(9px*var(--fs));color:var(--ink-dim);letter-spacing:.06em;margin-top:5px}
+.plan .breakdown b{color:var(--cyan-hot);font-weight:400}
+.usagegrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:8px;font-size:calc(10px*var(--fs))}
+.usagegrid div{border:1px solid var(--line2);padding:4px 7px;background:rgba(2,12,4,.8);min-width:0}
+.usagegrid span{display:block;color:var(--ink-dim);font-size:calc(9px*var(--fs));letter-spacing:.13em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.usagegrid b{color:var(--cyan-hot);font-size:calc(13px*var(--fs));font-variant-numeric:tabular-nums}
+.usagegrid b.live{color:#dfffd6;text-shadow:0 0 8px rgba(57,255,20,.6)}
+.note{font-size:calc(9px*var(--fs));color:var(--ink-dim);margin:7px 0 0;line-height:1.4;letter-spacing:.02em}
+
+/* ── the gate ────────────────────────────────────────────────────────────
+   GEOMETRY IS EXACT, NOT EYEBALLED. All three ring PNGs are rendered by
+   blender-insight-ui.py through the SAME orthographic camera (ortho_scale 2.2 across 1024 px), so
+   they only line up if all three are displayed at the SAME size - hence every .ring is inset:0 on
+   one square .gatebox. That also makes the core disc exact: the innermost engraved groove of
+   ring_core sits at world radius 0.20, so its diameter is (2 x 0.20) / 2.2 = 18.18% of the box.
+   --core-frac below IS that number. Change the groove radius in the Blender script and change it
+   here in the same edit, or they drift apart silently. */
+:root{ --core-frac:18.18%; }
+.centre{align-items:center}
+.centre>.panel{width:100%;min-width:0}   /* a content-sized panel spilled past the column at 1366 */
+/* the gate is a SIZE CONTAINER. Its height is whatever the column has left after the
+   alarms, ACTIVITY and TEAM (those no longer shrink), and the ring is sized from that height
+   (--gs, below) instead of a fixed 38vh - so it can never overflow onto the panels or the cards. */
+.gate{position:relative;flex:1 1 0;min-height:0;width:100%;display:flex;flex-direction:column;
+  align-items:stretch;justify-content:center;container-type:size;overflow:hidden}
+#p-activity,#p-team,.alarms{flex:none}
+/* cards on the left, ring on the right. The cards column is as tall as the gate box and each card
+   takes an equal third of it; the leaders are drawn to the card's MEASURED right edge (renderMemory),
+   so whatever the gap between the columns, the line lands on the card. */
+/* rings on the RIGHT, the tier cards take every pixel left of them */
+/* --gs: the ring's side - at most 38vh, never taller than the gate minus the readout under it,
+   never wider than half the column. The readout lives in the ring's own column (.gatecol). */
+.gaterow{--gs:max(60px,min(38vh,calc(100cqh - 88px),48cqw));display:grid;grid-template-columns:minmax(0,1fr) var(--gs);
+  gap:8px;align-items:center;height:100%;min-height:0}
+.gatecol{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:0;width:var(--gs)}
+.gatebox{position:relative;width:var(--gs);aspect-ratio:1;flex:none}
+.ring{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;
+  filter:hue-rotate(var(--hue)) saturate(1.2)}
+.ring.core{opacity:.92}
+.ring.outer{animation:spin 64s linear infinite;filter:hue-rotate(var(--hue)) saturate(1.2) drop-shadow(0 0 18px rgba(57,255,20,.35))}
+.ring.inner{animation:spin 41s linear infinite reverse}
+.gate.busy .ring.outer{animation-duration:13s}
+.gate.busy .ring.inner{animation-duration:8s}
+.gate.stuck .ring.outer{animation-duration:5s;filter:hue-rotate(var(--hue)) saturate(1.2) drop-shadow(0 0 22px rgba(255,90,60,.6))}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* burn rate: hot = fast; blaze = a blur with smoke. Pure CSS - costs nothing but GPU. */
+.gate.hot .ring.outer{animation-duration:3.2s;filter:hue-rotate(var(--hue)) saturate(1.4) drop-shadow(0 0 24px rgba(120,255,60,.6))}
+.gate.hot .ring.inner{animation-duration:2s}
+.gate.blaze .ring.outer{animation-duration:.9s;filter:hue-rotate(var(--hue)) saturate(1.6) brightness(1.25) drop-shadow(0 0 30px rgba(255,170,40,.75))}
+.gate.blaze .ring.inner{animation-duration:.55s;filter:hue-rotate(var(--hue)) brightness(1.2) drop-shadow(0 0 14px rgba(255,120,30,.7))}
+.gate.blaze .avatar{box-shadow:0 0 44px rgba(255,150,40,.95), inset 0 0 12px #000}
+.gate.blaze .gstate{color:#fff0d6;text-shadow:0 0 18px rgba(255,160,50,.9)}
+.smoke{position:absolute;inset:0;pointer-events:none;overflow:visible;display:none}
+.gate.blaze .smoke{display:block}
+.smoke i{position:absolute;left:50%;bottom:52%;width:26%;aspect-ratio:1;margin-left:-13%;border-radius:50%;opacity:0;
+  background:radial-gradient(circle at 45% 55%, rgba(200,200,200,.55) 0%, rgba(150,150,150,.32) 38%, rgba(90,90,90,0) 70%);
+  filter:blur(6px);animation:rise 2.6s ease-out infinite;will-change:transform,opacity}
+.smoke i:nth-child(2){left:36%;animation-delay:.35s;animation-duration:2.9s}
+.smoke i:nth-child(3){left:64%;animation-delay:.7s;animation-duration:2.4s}
+.smoke i:nth-child(4){left:44%;animation-delay:1.05s;animation-duration:3.1s}
+.smoke i:nth-child(5){left:58%;animation-delay:1.4s;animation-duration:2.7s}
+.smoke i:nth-child(6){left:30%;animation-delay:1.75s;animation-duration:3.3s}
+.smoke i:nth-child(7){left:70%;animation-delay:2.1s;animation-duration:2.5s}
+.smoke i:nth-child(8){left:50%;animation-delay:2.45s;animation-duration:3s}
+@keyframes rise{
+  0%{transform:translate(0,0) scale(.5);opacity:0}
+  12%{opacity:.9}
+  100%{transform:translate(calc(-20px + 40px * var(--drift,.5)),-140%) scale(1.9) rotate(25deg);opacity:0}
+}
+.smoke i:nth-child(odd){--drift:.15} .smoke i:nth-child(even){--drift:.85}
+@media (prefers-reduced-motion:reduce){.smoke{display:none!important}}
+/* ?smoke=1 freezes the puffs mid-rise so a still capture can check them */
+.gate.smoketest .smoke i{animation:none;opacity:.7;transform:translate(0,-70%) scale(1.5)}
+
+/* dead centre of the box, filling the innermost groove exactly */
+.avatar{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:var(--core-frac);aspect-ratio:1;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 38%,#0e4a16 0%,#031a06 62%,#010a02 100%);
+  color:var(--cyan-hot);font:bold calc(34px*var(--fs)) "IBM Plex Mono",Consolas,monospace;text-shadow:0 0 12px rgba(57,255,20,.7);
+
+  box-shadow:0 0 22px rgba(57,255,20,.45), inset 0 0 12px #000;
+  outline:1px solid rgba(57,255,20,.55);outline-offset:-1px;}
+.gate.busy .avatar{box-shadow:0 0 34px rgba(57,255,20,.8), inset 0 0 12px #000}
+.gate.stuck .avatar{outline-color:var(--red);box-shadow:0 0 30px rgba(255,90,60,.75), inset 0 0 12px #000}
+
+.gateread{text-align:center;flex:none;width:100%;min-width:0}
+.gateread>div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gmodel{font-size:calc(10.5px*var(--fs));color:var(--cyan);letter-spacing:.2em}
+.gstate{font-size:calc(18px*var(--fs));color:#dfffd6;letter-spacing:.22em;text-shadow:0 0 16px rgba(57,255,20,.7)}
+.gate.stuck .gstate{color:#ffd9d0;text-shadow:0 0 16px rgba(255,90,60,.8)}
+.gsub{font-size:calc(10.5px*var(--fs));color:var(--ink-dim);margin-top:2px;max-width:100%;margin-inline:auto;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gatering-label{font-size:calc(10px*var(--fs));letter-spacing:.3em;color:var(--cyan-dim);margin-top:4px}
+
+/* ── alarm strip ─────────────────────────────────────────────────────── */
+.alarms{flex:none;width:100%;display:flex;flex-direction:column;gap:3px}
+.alarm{display:flex;align-items:center;gap:9px;padding:4px 10px;border:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(57,255,20,.10),rgba(2,10,4,.9));
+  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px)}
+.alarm b{letter-spacing:.2em;font-size:calc(11px*var(--fs));color:var(--cyan-hot);flex:none}
+.alarm span{font-size:calc(10.5px*var(--fs));color:var(--ink-dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.alarm i{width:8px;height:8px;flex:none;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.alarm.warn{border-color:#7a6118;background:linear-gradient(90deg,rgba(224,178,58,.16),rgba(2,10,4,.9))}
+.alarm.warn b{color:var(--amber)} .alarm.warn i{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.alarm.critical{border-color:#8c3421;background:linear-gradient(90deg,rgba(255,90,60,.22),rgba(2,10,4,.9));
+  animation:klaxon 1.15s ease-in-out infinite}
+.alarm.critical b{color:#ffb9a8} .alarm.critical i{background:var(--red);box-shadow:0 0 10px var(--red)}
+@keyframes klaxon{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}
+
+.chip.btn{cursor:pointer;font:inherit;letter-spacing:.16em}
+.chip.btn:hover{border-color:var(--cyan)}
+.chip.btn.on em{color:var(--green)}
+
+.statline{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:calc(10px*var(--fs))}
+.statline div{border:1px solid var(--line2);padding:4px 7px;background:rgba(2,12,4,.8)}
+.statline span{display:block;color:var(--ink-dim);letter-spacing:.14em;font-size:calc(9px*var(--fs))}
+.statline b{color:var(--cyan-hot);font-size:calc(15px*var(--fs));font-variant-numeric:tabular-nums;font-weight:600}
+.sparkwrap{margin-top:7px}
+#spark{width:100%;height:56px;display:block}
+
+/* ── TEAM GRAPH (public/graph.js) ─────────────────────────────────────────────────
+   canvas underneath (stars, sweep, particles, flashes), svg on top (edges, nodes, labels). Node
+   and edge colour come from the roster through --c. running pulses, idle dims, done settles with
+   a check mark. Reduced motion: the CSS loops stop here and graph.js draws one still frame. */
+.tgraph{position:relative;flex:1;min-height:0;overflow:hidden;
+  background:radial-gradient(60% 55% at 50% 50%,rgba(57,255,20,.06),transparent 70%)}
+#p-graph h2{white-space:nowrap}
+#graphStamp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tgfx,.tgsvg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tgsvg{overflow:visible}
+.tgguides ellipse{fill:none;stroke:var(--line2);stroke-width:1;stroke-dasharray:2 6;opacity:.7}
+.tgedge{fill:none;stroke:var(--c,var(--cyan-dim));stroke-width:1.2;opacity:.45;transition:opacity 1s ease,stroke-width .6s ease}
+.tgedge.subagent{stroke-dasharray:3 4;stroke-width:1}
+.tgedge.idle{opacity:.2} .tgedge.done{opacity:.1}
+.tgedge.hot{opacity:.85;stroke-width:1.8}
+.tgedge.running{stroke-dasharray:6 5;animation:tgflow 1.6s linear infinite}
+.tgedge.subagent.running{stroke-dasharray:3 4}
+@keyframes tgflow{to{stroke-dashoffset:-22}}
+.tgn{transition:opacity 1.2s ease}
+.tgn .core{fill:#010802;stroke:var(--c,var(--cyan));stroke-width:2}
+.tgn .ctx{fill:none;stroke:var(--c,var(--cyan));stroke-width:2;opacity:.55;stroke-linecap:round}
+.tgn .halo{fill:var(--c,var(--cyan));opacity:0;transform-box:fill-box;transform-origin:center}
+.tgn.running .halo{animation:tghalo 1.9s ease-in-out infinite}
+.tgn.running .core{fill:color-mix(in srgb,var(--c,#39ff14) 22%,#010802);filter:drop-shadow(0 0 6px var(--c,#39ff14))}
+@keyframes tghalo{0%,100%{opacity:.05;transform:scale(.85)}50%{opacity:.28;transform:scale(1.15)}}
+.tgn.idle{opacity:.5}
+.tgn.lead.idle{opacity:.85}   /* the root never fades into the background */
+.tgn.done{opacity:.42}
+.tgn .check{fill:none;stroke:var(--c,var(--cyan));stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.tgn.done .check{opacity:1}
+.tgn.err .core{stroke:var(--red)}
+.tgn.lead .av{fill:#031a06}
+.tgn.lead .rim{fill:none;stroke:#ffe066;stroke-width:2;filter:drop-shadow(0 0 8px rgba(255,224,102,.7))}
+.tgn.lead .ctx{stroke:#ffe066;stroke-width:3;opacity:.7}
+.tgn.lead .halo{fill:#ffe066}
+.tgn.lead.running .halo{animation:tghalo 2.6s ease-in-out infinite}
+.tgn.lead .emb{opacity:.55;filter:hue-rotate(var(--hue)) saturate(1.2);transform-box:fill-box;transform-origin:center;
+  animation:spin 48s linear infinite}
+.tgn.lead.running .emb{opacity:.8;animation-duration:18s}
+/* no text-anchor here: graph.js sets it per label (start/end for labels placed beside a node) */
+.tgn .lab{font-family:var(--mono);letter-spacing:.06em;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
+.tgn .l1{fill:var(--c,var(--cyan-hot));font-size:calc(10.5px*var(--fs));font-weight:600;letter-spacing:.1em}
+.tgn .l2{fill:var(--ink);font-size:calc(9px*var(--fs))}
+.tgn .l3{fill:var(--ink-dim);font-size:calc(9px*var(--fs))}
+.tgn.subagent .l1{font-size:calc(9px*var(--fs))} .tgn.subagent .l2{font-size:calc(8.5px*var(--fs));fill:var(--ink-dim)}
+.tgn.lead .l1{fill:#ffe066;font-size:calc(12px*var(--fs));letter-spacing:.24em}
+/* stale (earlier runs): a dim dot on the outer ring, the name only while hovered */
+.tgguides ellipse.old{stroke-dasharray:1 9;opacity:.5}
+.tgn.stale{opacity:.4}
+.tgn.stale .core{stroke-width:1.5;fill:#010802}
+.tgn.stale .hit{fill:transparent}
+.tgn.stale .lab{opacity:0;transition:opacity .2s ease}
+.tgn.stale .l1{font-size:calc(9.5px*var(--fs))}
+.tgn.stale:hover{opacity:1}
+.tgn.stale:hover .lab{opacity:1}
+.tgedge.stale{opacity:.07;stroke-dasharray:2 6;stroke-width:1;animation:none}
+.tgempty{fill:var(--ink-dim);font-size:calc(11px*var(--fs));text-anchor:middle;letter-spacing:.2em}
+@media (prefers-reduced-motion:reduce){
+  .tgn .halo,.tgn .emb,.tgedge.running,.teamrow .dot.running{animation:none!important}
+  .tgn.running .halo{opacity:.18}
+}
+
+.skills{overflow:auto;display:flex;flex-direction:column;gap:4px}
+/* LESSONS box: fixed height above SKILLS ENGAGED, ~5 rows visible, the rest scroll */
+.lessons{display:flex;flex-direction:column;gap:1px;max-height:calc(118px*var(--fs));overflow:auto}
+.lsrow{display:flex;gap:7px;align-items:baseline;padding:2px 4px;border-left:2px solid var(--line2);cursor:pointer;font-size:calc(10px*var(--fs))}
+.lsrow:hover,.lsrow:focus-visible{background:rgba(57,255,20,.07);border-left-color:var(--cyan-hot);outline:none}
+.lsrow b{color:var(--cyan-hot);font-variant-numeric:tabular-nums;flex:none;min-width:4ch}
+.lsrow .lt{color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0;flex:1}
+.lsrow .lw,.lstrig .lw{font-style:normal;flex:none;font-size:calc(8.5px*var(--fs));letter-spacing:.1em;color:var(--cyan-dim);border:1px solid var(--line2);padding:0 3px}
+.lsrow s{text-decoration:none;color:var(--ink-dim);flex:none;font-size:calc(9px*var(--fs))}
+.lsrow.unfired{border-left-color:var(--amber)} .lsrow.unfired .lw{color:var(--amber);border-color:#7a6118}
+.lsmodal{width:min(860px,96vw)}
+.lstitle{margin:8px 0 4px;color:#dfffd6;font-size:calc(14px*var(--fs));line-height:1.4}
+.lssec{margin:14px 0 5px;color:var(--cyan-dim);font-size:calc(9.5px*var(--fs));letter-spacing:.2em;border-bottom:1px solid var(--line2);padding-bottom:2px}
+.lstrig{display:flex;gap:10px;align-items:baseline;margin:5px 0}
+.lstrig .q b{color:var(--cyan-hot);font-weight:500;font-size:calc(12px*var(--fs));line-height:1.45}
+.lstrig .q .n{color:var(--ink-dim);font-size:calc(10.5px*var(--fs));line-height:1.45;margin-top:2px}
+.lsnone{color:var(--amber);font-size:calc(11px*var(--fs))}
+.lshooks{color:var(--ink);font-size:calc(11px*var(--fs))}
+.lsbody{white-space:pre-wrap;color:var(--ink);font-size:calc(11.5px*var(--fs));line-height:1.55}
+.srow{border:1px solid var(--line2);padding:4px 7px;background:rgba(2,12,4,.7);
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
+.srow b{color:var(--cyan-hot);letter-spacing:.12em}
+.srow span{display:block;font-size:calc(9.5px*var(--fs));color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.empty{color:var(--ink-dim);font-size:calc(10px*var(--fs));opacity:.75;padding:6px 2px}
+
+/* ── bottom strips ───────────────────────────────────────────────────── */
+.tools,.files,.errors{overflow:auto;display:flex;flex-direction:column;gap:2px;font-size:calc(10.5px*var(--fs))}
+.trow{display:flex;gap:8px;align-items:baseline;padding:1px 0;border-bottom:1px dotted rgba(29,122,46,.35)}
+.trow .tt{color:var(--ink-dim);font-variant-numeric:tabular-nums;flex:none}
+.trow .tn{color:var(--cyan);flex:none;min-width:12ch;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:18ch}
+.trow .td{color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.trow .dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--cyan-dim)}
+.trow .dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.trow .dot.bad{background:var(--red);box-shadow:0 0 7px var(--red)}
+/* ── TEAM: the lead and every agent transcript of the session, one row each ─────── */
+.team{overflow:auto;max-height:198px;display:flex;flex-direction:column;gap:2px;font-size:calc(10.5px*var(--fs));container-type:inline-size}
+/* wider number columns (MEM is "31/8/35"), short headers right-aligned over them */
+.teamrow{display:grid;grid-template-columns:10px minmax(12ch,1.4fr) 9ch 11ch 7ch 8ch 8ch 7ch 11ch 7ch 5ch 7ch minmax(12ch,1.6fr);
+  gap:0 10px;align-items:baseline;padding:1px 0;border-bottom:1px dotted rgba(29,122,46,.35);min-width:0}
+.teamrow.head{color:var(--ink-dim);font-size:calc(9px*var(--fs));letter-spacing:.1em;border-bottom:1px solid var(--line2);padding-bottom:2px}
+.teamrow.head span{overflow:hidden;white-space:nowrap;text-overflow:clip}
+.teamrow.head span.r{text-align:right}
+.teamrow.stale{opacity:.45}
+/* "+N earlier": agents quiet past team.staleMs, folded into one clickable row */
+.teamrow.more{display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--ink-dim);font-size:calc(9.5px*var(--fs));letter-spacing:.06em}
+.teamrow.more:hover{color:var(--ink)}
+.teamrow.more .mo{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.teamrow.more em{font-style:normal;opacity:.75}
+/* a narrow centre column (1366 wide and below): TYPE, UP, SKILL and FILE go to keep the rest legible;
+   all four are still in the graph's hover tip and the agent modal. Children by position (13 since the
+   ROLE + CORE columns): 1 dot 2 AGENT 3 TYPE 4 ROLE 5 CORE 6 STATUS 7 UP 8 TOOLS 9 MEM
+   10 SKILL 11 FILE 12 CTX 13 LAST TOOL - renumber these when a column is added */
+@container (max-width:760px){
+  .teamrow{grid-template-columns:10px minmax(9ch,1.2fr) 9ch 6ch 8ch 6ch 11ch 7ch minmax(8ch,2fr);gap:0 8px}
+  .teamrow:not(.more)>:nth-child(3),.teamrow:not(.more)>:nth-child(7),.teamrow:not(.more)>:nth-child(10),.teamrow:not(.more)>:nth-child(11){display:none}
+}
+.teamrow .dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--cyan-dim);align-self:center}
+.teamrow .dot.running{background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1.6s ease-in-out infinite}
+.teamrow .dot.idle{background:var(--amber);box-shadow:0 0 5px var(--amber)}
+.teamrow .dot.done{background:var(--line);box-shadow:none}
+.teamrow.lead .dot{background:#ffe066;box-shadow:0 0 6px #ffe066}
+.teamrow.lead .dot.running{animation:blink 1.6s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.teamrow .nm{color:var(--cyan-hot);letter-spacing:.08em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.teamrow.lead .nm{color:#ffe066}
+.teamrow .num.dim{color:var(--line);opacity:.8}
+/* "· by <agent>" tags - colour comes from the roster (app.js agentColor); lead is always the dim ink */
+em.by{font-style:normal;font-size:calc(9px*var(--fs));letter-spacing:.08em;margin-left:5px;white-space:nowrap}
+em.by.lead{color:var(--ink-dim)}
+.tc .who{font-size:calc(9px*var(--fs)*var(--tcs));margin:-1px 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc .who em.by:first-child{margin-left:0}
+.tc .who::before{content:"by  ";color:var(--cyan-dim);letter-spacing:.1em}
+.teamrow .ty,.teamrow .lt{color:var(--ink-dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.teamrow .lt{color:var(--ink)}
+.teamrow .st{letter-spacing:.12em;font-size:calc(9.5px*var(--fs));color:var(--cyan)}
+.teamrow .st.idle{color:var(--amber)} .teamrow .st.done{color:var(--ink-dim)}
+.teamrow .num{color:var(--ink);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.teamrow .usd{color:var(--amber);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.teamrow.done{opacity:.55}
+.teamrow .bad{color:var(--red)}
+.teamhead{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;border:1px solid var(--line2);
+  background:rgba(2,12,4,.8);padding:3px 8px;margin-bottom:4px;font-size:calc(9.5px*var(--fs));color:var(--ink-dim)}
+.teamhead b{color:var(--cyan-hot);font-size:calc(13px*var(--fs));font-variant-numeric:tabular-nums}
+.teamhead b.dim{color:var(--ink);font-size:calc(11px*var(--fs))}
+.teamhead b.usd{color:var(--amber);font-size:calc(11px*var(--fs))}
+.teamhead .tn{margin-left:auto;color:var(--cyan-dim);letter-spacing:.1em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:40%}
+
+.frow{display:flex;gap:8px}
+.frow .op{flex:none;width:6ch;color:var(--ink-dim)}
+.frow .fp{color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;direction:rtl;text-align:left}
+.fold{display:flex;gap:8px;color:var(--cyan-dim);min-width:0}
+.fold span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.fold b{margin-left:auto;color:var(--cyan);flex:none}
+.erow{border-left:2px solid var(--red);padding:2px 0 3px 7px;margin-bottom:3px}
+.erow .eh{color:var(--red);font-size:calc(10px*var(--fs));letter-spacing:.1em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.erow .em{color:var(--ink-dim);font-size:calc(10px*var(--fs));display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.subhead{color:var(--cyan-dim);font-size:calc(9px*var(--fs));letter-spacing:.2em;margin:5px 0 2px}
+
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-track{background:#010601}
+::-webkit-scrollbar-thumb{background:var(--line);border:1px solid #020a03}
+
+@media (max-width:1180px){
+  .grid{grid-template-columns:1fr 1fr}
+  .centre{grid-column:1/-1;order:-1}
+  .strip{grid-template-columns:1fr}
+  .strip .panel:nth-child(n+2){display:none}
+}
+
+/* ── memory tiers, drawn ON the gate ──────────────────────────────────
+   ring_core.png carries four engraved grooves at world radii 0.20 / 0.32 / 0.44 / 0.54, rendered
+   through an ortho_scale 2.2 camera. So a groove of radius r occupies (2r / 2.2) x 100 percent of
+   the box, and half that in the 0-100 SVG viewBox:
+        0.20 -> the core disc (the agent)
+        0.32 -> TIER 0   diameter 29.09%   viewBox radius 14.55
+        0.44 -> TIER 1   diameter 40.00%   viewBox radius 20.00
+        0.54 -> TIER 2   diameter 49.09%   viewBox radius 24.55
+   TIER_R in app.js holds those three numbers. Change a groove radius in the Blender script and
+   change them together, or the dots drift off their rings. */
+.leaders{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.leaders line{stroke-width:.4;opacity:.9}
+.leaders circle.pip{r:1.9}
+.leaders circle.halo{r:3.6;fill:none;stroke-width:.45;opacity:.55;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.2}50%{opacity:.7}}
+
+/* The column is exactly as tall as the gate box and the three cards share it equally, so a card is
+   as big as the ring allows. The leader is drawn to the card's measured centre-right, so the line
+   from the ring ends ON the card's edge (renderMemory), whatever the gap. */
+.tiercards{position:relative;height:100%;max-height:calc(38vh + 88px);display:flex;flex-direction:column;gap:6px;min-width:0}
+.tc{position:relative;flex:1 1 0;min-height:0;display:flex;flex-direction:column;overflow:hidden;
+  background:linear-gradient(90deg,rgba(2,10,4,.97),rgba(2,10,4,.85));
+  border:1px solid var(--line2);border-left-width:3px;padding:6px 10px 7px;
+  clip-path:polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,9px 100%,0 calc(100% - 9px))}
+.tc .tcn{display:flex;gap:8px;align-items:baseline;margin-bottom:2px}
+.tc b{letter-spacing:.18em;font-size:calc(11px*var(--fs)*var(--tcs))}
+/* the count only: plain `.tc em` also caught the per-agent `em.by` tags in .who and drew them 16 px bold */
+.tc .tcn em{font-style:normal;color:#dfffd6;font-variant-numeric:tabular-nums;font-weight:600;font-size:calc(16px*var(--fs)*var(--tcs));margin-left:auto}
+.tc em.by{font-size:calc(9px*var(--fs)*var(--tcs))}
+/* fitTierCards adds .tight when even the header plus one file line does not fit (1280x720: a card is ~43 px) */
+.tc.tight{padding-top:2px;padding-bottom:2px;line-height:1.2}
+.tc.tight .tcn{margin-bottom:0}
+.tc.tight .hit{margin-top:1px;padding-top:1px}
+.tc .split{color:var(--ink-dim);font-size:calc(9.5px*var(--fs)*var(--tcs));letter-spacing:.08em}
+.tc .what{color:var(--cyan-dim);font-size:calc(9.5px*var(--fs)*var(--tcs));letter-spacing:.06em;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc .hits{flex:1;min-height:0;overflow:hidden}
+.tc .hit{border-top:1px dotted rgba(29,122,46,.45);padding-top:3px;margin-top:3px}
+.tc .hit .op{display:flex;gap:6px;font-size:calc(10px*var(--fs)*var(--tcs));align-items:baseline}
+.tc .hit .op i{font-style:normal;text-transform:uppercase;letter-spacing:.1em;flex:none;width:5ch}
+.tc .hit .op u{text-decoration:none;color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tc .hit .op s{text-decoration:none;color:var(--ink-dim);margin-left:auto;flex:none;font-size:calc(9px*var(--fs)*var(--tcs))}
+.tc .hit .why{color:var(--ink-dim);font-size:calc(9.5px*var(--fs)*var(--tcs));line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tc .hit .why::before{content:"why  ";color:var(--cyan-dim);letter-spacing:.1em}
+.tc.t0{border-left-color:#ffe066} .tc.t0 b{color:#ffe066}
+.tc.t1{border-left-color:var(--cyan-hot)} .tc.t1 b{color:var(--cyan-hot)}
+.tc.t2{border-left-color:#19c96a} .tc.t2 b{color:#19c96a}
+.tc.t3{border-left-color:#5ad1ff} .tc.t3 b{color:#5ad1ff}
+.teamrow .ro,.teamrow .co{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:calc(9.5px*var(--fs))}
+.teamrow .ro.def{color:#5ad1ff} .teamrow .ro.dim,.teamrow .co.dim{color:var(--ink-dim)}
+.teamrow .co{color:var(--green)} .teamrow .co.bad{color:#ff6e5a}
+.tc.cold{opacity:.55}
+.tc .op i.read{color:var(--cyan)} .tc .op i.write{color:var(--amber)} .tc .op i.search{color:var(--green)}
+.tc .op i.load{color:#ffe066}
+/* identity loaded but not in context (persisted hook output) - the one tier-0 state that must shout */
+.tc .idline{font-size:calc(9.5px*var(--fs)*var(--tcs));line-height:1.35;color:var(--ink-dim);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc .idline.warn{color:#ff6e5a}
+.tc.t0.bad{border-left-color:#ff6e5a} .tc.t0.bad b{color:#ff6e5a}
+.memnote{position:absolute;left:0;bottom:-14px;font-size:calc(9px*var(--fs));color:var(--amber);max-width:46ch;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.skhead{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;border:1px solid var(--line2);
+  background:rgba(2,12,4,.8);padding:3px 8px;margin-bottom:5px;font-size:calc(9.5px*var(--fs));color:var(--ink-dim)}
+.skhead b{color:var(--cyan-hot);font-size:calc(14px*var(--fs));font-variant-numeric:tabular-nums}
+.skhead b.dim{color:var(--ink);font-size:calc(11px*var(--fs))}
+.skhead.bad{border-color:#7a6118;background:rgba(224,178,58,.12)}
+.skhead.bad b:first-of-type{color:var(--amber)}
+.empty.warn{color:var(--amber);opacity:1}
+
+/* ── tooltip for anything that got cut off (app.js markOverflow sets data-tip) ─────────────── */
+[data-tip]{cursor:help}
+#tip{position:fixed;z-index:50;max-width:min(60vw,640px);padding:6px 9px;pointer-events:none;
+  border:1px solid var(--line);background:rgba(0,4,1,.97);color:var(--ink);font:calc(11px*var(--fs))/1.45 var(--mono);
+  letter-spacing:.03em;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 14px rgba(57,255,20,.25)}
+#tip[hidden]{display:none}
+
+/* ── AGENT DETAIL modal (public/agent.js) ──────────────────────────────────────────
+   Anything that opens it (graph node, TEAM row) carries data-agent: pointer cursor, focus ring.
+   Sits under #tip (z 50) so hover tips still work inside it. --c is the agent's roster colour. */
+[data-agent]{cursor:pointer}
+.teamrow[data-agent]:hover{background:rgba(57,255,20,.06)}
+.teamrow[data-agent]:focus-visible{outline:1px solid var(--cyan-hot);outline-offset:-1px}
+.tgn{outline:none}
+.tgn:focus-visible .core,.tgn:focus-visible .rim{stroke:#fff;stroke-width:3}
+.tgn:hover .core{filter:drop-shadow(0 0 6px var(--c,#39ff14))}
+.agback{position:fixed;inset:0;z-index:40;background:rgba(0,4,1,.72);display:flex;align-items:center;justify-content:center;padding:16px;
+  backdrop-filter:blur(2px)}
+.agback[hidden]{display:none}
+.agmodal{position:relative;width:min(980px,96vw);max-height:min(860px,92vh);overflow:auto;outline:none;
+  background:linear-gradient(180deg,rgba(3,16,5,.98),rgba(0,0,0,.98));border:1px solid var(--line);border-top:2px solid var(--c,var(--cyan));
+  box-shadow:0 0 34px rgba(57,255,20,.18),0 0 0 1px rgba(0,0,0,.8);padding:14px 18px 16px;
+  clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))}
+.agx{position:absolute;top:12px;right:30px;padding:1px 9px}
+.aghead{display:flex;align-items:center;gap:12px;padding-right:48px}
+.aghead h2{margin:0;font-size:calc(20px*var(--fs));letter-spacing:.2em;font-weight:600;text-shadow:0 0 14px color-mix(in srgb,var(--c,#39ff14) 55%,transparent)}
+.aghead .agtag{color:var(--ink-dim);font-size:calc(10.5px*var(--fs));letter-spacing:.16em}
+.aghead .dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--cyan-dim)}
+.aghead .dot.running{background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.6s ease-in-out infinite}
+.aghead .dot.idle{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.aghead .dot.done,.aghead .dot.stale{background:var(--line)}
+.agstate{margin-top:6px;font-size:calc(13px*var(--fs));letter-spacing:.2em;color:#dfffd6}
+.agstate.idle{color:var(--amber)} .agstate.done,.agstate.stale{color:var(--ink-dim)}
+.agsub{font-size:calc(10px*var(--fs));color:var(--ink-dim);letter-spacing:.06em;margin-top:2px}
+.agnow{display:flex;align-items:baseline;gap:10px;margin:10px 0 8px;padding:7px 10px;border:1px solid var(--line2);border-left:3px solid var(--c,var(--cyan));
+  background:rgba(2,12,4,.85);min-width:0}
+.agnow .k{color:var(--ink-dim);font-size:calc(9.5px*var(--fs));letter-spacing:.2em;flex:none}
+.agnow b{color:var(--cyan-hot);font-size:calc(14px*var(--fs));letter-spacing:.08em;flex:none}
+.agnow .lbl{color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.agnow .ago{margin-left:auto;color:var(--ink-dim);font-size:calc(10px*var(--fs));flex:none}
+.aggrid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px}
+.agcol{display:flex;flex-direction:column;gap:10px;min-width:0}
+.agsec h3{margin:0 0 4px;font-size:calc(9.5px*var(--fs));font-weight:600;letter-spacing:.22em;color:var(--cyan);border-bottom:1px solid var(--line2);padding-bottom:3px}
+.agact,.agline{display:flex;gap:8px;align-items:baseline;font-size:calc(10.5px*var(--fs));padding:1px 0;border-bottom:1px dotted rgba(29,122,46,.3);min-width:0}
+.agact .t,.agline .t{color:var(--ink-dim);font-variant-numeric:tabular-nums;flex:none}
+.agact b{color:var(--cyan);font-weight:400;flex:none;min-width:11ch}
+.agact .l,.agline .l{color:var(--ink);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.agact.bad b{color:var(--red)}
+.agline .op{color:var(--amber);flex:none;font-size:calc(9.5px*var(--fs));letter-spacing:.06em}
+.agkv{display:flex;gap:10px;align-items:baseline;font-size:calc(10.5px*var(--fs));padding:2px 0;min-width:0}
+.agkv span{color:var(--ink-dim);letter-spacing:.12em;font-size:calc(9.5px*var(--fs));flex:none;min-width:14ch}
+.agkv b{color:var(--cyan-hot);font-weight:400;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.agkv b.bad{color:var(--red)}
+.agmini{font-size:calc(9px*var(--fs));color:var(--cyan-dim);letter-spacing:.16em;margin:4px 0 1px}
+.agsec .meter{margin:2px 0 4px}
+@media (max-width:760px){.aggrid{grid-template-columns:1fr}}
+
+
+/* Short windows (1366x768 and the like): the centre column cannot hold the gate, the
+   sparkline and a five-row TEAM table at full size, and they used to overlap. Below 860 px tall
+   the sparkline goes, TEAM shows fewer rows (it scrolls) and the bottom strips get shorter, so
+   the gate keeps a readable ring. */
+@media (max-height:860px){
+  .sparkwrap{display:none}
+  .team{max-height:96px}
+  .strip{height:128px}
+  .panel{padding:5px 9px 7px}
+  .panel h2{margin-bottom:5px}
+  .tc .what,.tc .who{display:none}
+}

@@ -1,0 +1,39 @@
+{
+  "_note": "Insight reads local transcripts only. It makes no network calls. The budget below is a local gauge: API-list-equivalent dollars for the window, compared with usd.",
+  "_costModel": "API-LIST-EQUIVALENT. Every dollar figure is what this traffic WOULD cost at the API list prices in pricing.json. On a subscription plan you are not billed per token, so read the numbers as a measure of WORK DONE (and of how expensive a habit is), not as an invoice. Cache reads dominate long sessions - that is the prompt cache being re-read on every call.",
+  "budget": {
+    "window": "week",
+    "usd": 8000
+  },
+  "burn": {
+    "_note": "Ring speed and smoke on the gate. Tokens per minute, computed IN THE PAGE from the totals it already receives. hot = fast spin, blaze = a blur with smoke. Add ?burn=<tokens per minute> to the page URL to see the effect without waiting for a real burn.",
+    "hotTokPerMin": 1500000,
+    "blazeTokPerMin": 4000000
+  },
+  "contextLimit": 1000000,
+  "historyDays": 14,
+  "maxSessionsParsed": 40,
+  "pollMs": 700,
+  "rescanMs": 20000,
+  "promptsShown": 14,
+  "toolsShown": 28,
+  "filesShown": 16,
+  "alerts": {
+    "contextWarn": 75,
+    "contextCritical": 90,
+    "frictionWarn": 40,
+    "frictionCritical": 70,
+    "errorWindow": 12,
+    "errorBurst": 4,
+    "budgetWarn": 85,
+    "promptUsd": 75,
+    "idleMinutes": 15,
+    "skillsIdleAfter": 150
+  },
+  "team": {
+    "_note": "TEAM panel. An agent transcript that moved within activeMs is RUNNING, else IDLE; DONE only when its SubagentHandback was answered. Read from ~/.claude/teams/<team>/config.json and <session>/subagents/agent-*.jsonl - nothing is sampled from CPU.",
+    "activeMs": 60000,
+    "_staleNote": "An agent quiet (not running) for longer than staleMs is STALE - an earlier run. The TEAM GRAPH shrinks it to a dim outer-ring dot (label on hover) and the TEAM table folds it into a '+N earlier' row.",
+    "staleMs": 1800000
+  }
+}

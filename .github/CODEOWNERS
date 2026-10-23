@@ -1,0 +1,18 @@
+# Hooks in .claude/settings.json run code on EVERY member's machine on every tool call, so anyone who can merge here
+# can run code on the whole team's machines. Treat these paths like a build script: required review, named owners.
+# Replace @your-org/agent-maintainers with real owners, and enable "Require review from Code Owners" on main.
+
+/.claude/                @your-org/agent-maintainers
+/tools/                  @your-org/agent-maintainers
+/insight/                @your-org/agent-maintainers
+/agents-src/             @your-org/agent-maintainers
+/agent/                  @your-org/agent-maintainers
+/CLAUDE.md               @your-org/agent-maintainers
+
+# memory/ is the team's shared knowledge: any member may propose, one other member approves.
+# Every memory's description lands in EVERY member's session context, so read memory diffs as you would read code:
+# a line that tells the agent to run, fetch or ignore something is an attack, not a note.
+/memory/                 @your-org/team
+# Lessons reach further - their trigger is in every session AND compiled into the role agents' system prompts -
+# so they need a maintainer, like the code. (Later rules win in CODEOWNERS.)
+/memory/lessons/         @your-org/agent-maintainers

@@ -1,0 +1,9 @@
+# preview.png would be a screenshot of a REAL session - it can contain prompt text and file paths.
+# Regenerate it locally with:  node server.mjs --port 7720  then  /?snap=1
+preview.png
+run.log
+insight.log
+insight.err
+t*.log
+blender*.log
+.cache.json

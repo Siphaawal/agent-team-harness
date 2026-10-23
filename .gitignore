@@ -1,0 +1,32 @@
+# MUST be committed, even when a member's global git excludes (core.excludesFile) ignore them - a personal
+# ".claude/skills/" or ".claude/agents/" rule would otherwise silently drop the team's skills and agents from a commit.
+# memory_verify check 6 tests both halves: these must NOT be ignored, the paths below MUST be.
+!.claude/
+!.claude/skills/
+!.claude/skills/**
+!.claude/agents/
+!.claude/agents/**
+!.claude/agent-memory/
+!.claude/agent-memory/**
+!.claude/hooks/
+!.claude/hooks/**
+!.claude/settings.json
+
+# generated at every session start by tools/memory_index.py - never commit, never hand-edit
+memory/_gen/
+
+# per-clone hook state (gate markers, logs of guard firings)
+.claude/state/
+.claude/settings.local.json
+
+# each member's own list of names that must never be committed (see tools/leak_scan.py)
+tools/leak_patterns.txt
+
+# Insight runtime
+insight/*.log
+insight/*.err
+
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
