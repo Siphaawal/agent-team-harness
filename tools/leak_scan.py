@@ -60,7 +60,12 @@ BUILTIN = [
     ("private ip", re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")),
 ]
 SKIP_DIRS = {".git", "node_modules", "__pycache__"}
-MAX_BYTES = 512 * 1024
+MAX_BYTES = 512 * 1024                   # text files
+MAX_BINARY_BYTES = 32 * 1024 * 1024      # images, PDFs: only their printable runs are scanned
+# Inside a binary, an address must look real: 2+ char local part, lowercase domain labels. Compressed image data is
+# random bytes, and in a 12 MB PDF one run spelled "a@2r.lQ" - the text-file rule would flag that every scan.
+BINARY_EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[a-z0-9._%+-]{2,64}@(?!example\.(?:com|org)\b)[a-z0-9-]{2,}"
+                          r"(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b")
 MAX_LINE = 4096
 PRINTABLE = re.compile(rb"[\x20-\x7e]{6,}")       # text runs inside a binary (PNG tEXt chunks, EXIF, embedded paths)
 
@@ -115,12 +120,18 @@ def scan(root, only=None, local=None):
             continue
         if not os.path.isfile(path) or os.path.abspath(path) == me or os.path.basename(path) == "leak_patterns.txt":
             continue
-        if os.lstat(path).st_size > MAX_BYTES:
-            hits.append((rel, 0, "unscanned", "over %d KB - too large to scan; keep it out of the repo" % (MAX_BYTES >> 10)))
+        size = os.lstat(path).st_size
+        with open(path, "rb") as f:
+            binary = b"\0" in f.read(8192)
+        # Text is regex-scanned line by line, so it has a tight cap. A binary (an image, a PDF) is scanned only for
+        # its short printable runs - metadata, embedded paths - which stays fast even for a large file.
+        cap = MAX_BINARY_BYTES if binary else MAX_BYTES
+        if size > cap:
+            hits.append((rel, 0, "unscanned", "over %d KB - too large to scan; keep it out of the repo" % (cap >> 10)))
             continue
         with open(path, "rb") as f:
             data = f.read()
-        if b"\0" in data[:8192]:                       # binary: scan only the text runs inside it
+        if binary:                                     # binary: scan only the text runs inside it
             text = "\n".join(m.group(0).decode("ascii") for m in PRINTABLE.finditer(data))
         else:
             text = data.decode("utf-8", "replace")
@@ -132,6 +143,8 @@ def scan(root, only=None, local=None):
                              % (len(line), MAX_LINE)))
                 continue
             for label, rx in pats:
+                if binary and label == "email":
+                    rx = BINARY_EMAIL           # random compressed bytes spell "a@2r.lQ"; real metadata is lowercase
                 m = rx.search(line)
                 if m:
                     hits.append((rel, n, label, m.group(0)[:60]))

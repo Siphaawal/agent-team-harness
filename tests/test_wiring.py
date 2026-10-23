@@ -312,6 +312,21 @@ class TestLeakScan(Repo):
                 if os.path.lexists(p):
                     os.remove(p)
 
+    def test_large_binary_scanned_for_runs_not_refused(self):
+        big = os.path.join(self.root, "docs", "p-big.pdf")
+        junk = bytes((i * 7919 + 13) % 256 for i in range(3 * 1024 * 1024))         # 3 MB of binary noise
+        real = b"jane.doe" + b"@" + b"acme-corp.com"                                  # built here, never committed
+        with open(big, "wb") as f:
+            f.write(b"%PDF-1.4\0" + junk + b"\0a" + b"@2r.lQ\0" + junk[:1000] + b"\0/Author (" + real + b")\0")
+        try:
+            rc, out, _ = self.py("tools/leak_scan.py")
+            mine = [l for l in out.splitlines() if l.startswith("docs/p-big.pdf")]
+            self.assertTrue(any(("email: " + real.decode()) in l for l in mine), out)   # real metadata caught
+            self.assertFalse(any(("a" + "@2r.lQ") in l for l in mine), out)                    # random run ignored
+            self.assertFalse(any("unscanned" in l for l in mine), out)                  # 3 MB binary is scanned
+        finally:
+            os.remove(big)
+
     def test_password_pattern_literals_not_code(self):
         bad = os.path.join(self.root, "memory", "topics", "p-pw.md")
         lines = ["secret = os.path.join(x, y)", "password = getpass()", 'token = cfg["token"]', "api_key: ${API_KEY}",

@@ -6,6 +6,17 @@ their own clone. What one member's session learns reaches every other member's s
 > Diagrams are [Mermaid](https://mermaid.js.org/) and render on GitHub and GitLab. In an editor without Mermaid
 > support, each diagram is followed by a short text description.
 
+**Visual overviews** - for presenting the idea to a team:
+
+- [Architecture slide deck](docs/Agent_Team_Harness_Architecture.pdf) (PDF, 13 slides): the problem it solves, the
+  zero-infrastructure architecture, the session gates, the librarian, the cross-member knowledge loop, memory
+  layout, agent teams, trust boundaries, tier-0 packing, Insight's security, and the daily workflow.
+- [One-page architecture overview](docs/Shared_AI_Agent_Architecture_Overview.png) (PNG infographic): the same
+  system on a single page.
+
+Both are AI-generated summaries, so a few labels are approximate. Where they differ from this README or
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the text documents are the reference.
+
 ---
 
 ## Contents
@@ -14,12 +25,13 @@ their own clone. What one member's session learns reaches every other member's s
 2. [How it works](#2-how-it-works) - architecture, one session, the knowledge loop, tier 0, agent teams, Insight
 3. [Getting started](#3-getting-started) - prerequisites, team setup (once), member setup, first session
 4. [Daily use](#4-daily-use)
-5. [Writing memory by hand](#5-writing-memory-by-hand)
-6. [Security model](#6-security-model)
-7. [Troubleshooting](#7-troubleshooting)
-8. [Maintenance](#8-maintenance)
-9. [Repository layout](#9-repository-layout)
-10. [FAQ](#10-faq)
+5. [The Insight dashboard](#5-the-insight-dashboard) - start it, read it, alarms, settings
+6. [Writing memory by hand](#6-writing-memory-by-hand)
+7. [Security model](#7-security-model)
+8. [Troubleshooting](#8-troubleshooting)
+9. [Maintenance](#9-maintenance)
+10. [Repository layout](#10-repository-layout)
+11. [FAQ](#11-faq)
 
 ---
 
@@ -245,7 +257,7 @@ token is never written to a file, and a restart makes a new one.
 
 If your organisation manages Claude Code centrally, ask the administrator whether **project hooks are allowed**. A
 managed setting (`allowManagedHooksOnly` or `disableAllHooks`) switches every hook in this repo off; the agent then has
-no persona and no memory, and section 7 shows how to tell.
+no persona and no memory, and section 8 shows how to tell.
 
 ### 3.2 Team setup (once, by whoever owns the agent)
 
@@ -345,8 +357,8 @@ no persona and no memory, and section 7 shows how to tell.
    |---|---|
    | It lists the manifest with every part present and gives the agent's name | working |
    | "PERSONA NOT INITIALISED" | the team setup step 2 was not done |
-   | A part is missing, or it saw only a preview of a saved file | tier 0 is over budget - see section 8 |
-   | It has no idea what you mean | hooks did not run - see section 7 |
+   | A part is missing, or it saw only a preview of a saved file | tier 0 is over budget - see section 9 |
+   | It has no idea what you mean | hooks did not run - see section 8 |
 
 ### 3.4 Your first session, end to end
 
@@ -375,13 +387,134 @@ no persona and no memory, and section 7 shows how to tell.
 | `/wrap` | log, memories, lessons, index, health check, memory-only branch |
 | `python3 tools/memory_tools.py search "<terms>"` | search the team's memory yourself |
 
-**Insight** (optional): `bash insight/start.sh --open` serves on 127.0.0.1, port 7717 by default - or the next free
-port if 7717 is taken - and prints the URL to use, with this launch's token (`http://127.0.0.1:<port>/?token=...`).
-`--open` opens that URL for you; otherwise paste the printed URL into your browser.
+To watch what the agent is doing while it works, open the Insight dashboard: section 5.
 
 ---
 
-## 5. Writing memory by hand
+## 5. The Insight dashboard
+
+Insight is a local, live view of what Claude Code is doing in your sessions: how full the context window is, every
+tool call, the files touched, failures, which skills ran, the agent team and who is messaging whom, which tier of
+the team's memory is being read or written, and the newest lessons. It reads the transcripts Claude Code already
+writes on your machine; nothing is sent anywhere, and nothing in it costs tokens.
+
+![The Insight dashboard during a session: context and budget, lessons, skills, memory tiers around the central gate, activity, the team table and graph, the tool stream, files and faults](docs/img/insight.png)
+
+*A session on invented demo data: the agent "Atlas" was asked to add retries to an export job. It loaded all 8
+tier-0 parts, dispatched the librarian, read two memories, ran the `team-lead` skill, hit one failing test, fixed
+it, spawned a reviewer and finished with `/wrap`.*
+
+### 5.1 Start it
+
+Needs Node 18+ (`node --version`). Nothing to install: it uses Node's built-ins only.
+
+```bash
+bash insight/start.sh --open
+```
+
+It prints one line to use:
+
+```
+[insight] open this URL (it carries this launch's token): http://127.0.0.1:7717/?token=3f9c...e1
+```
+
+`--open` opens that URL in your browser; without it, copy the URL from the terminal. Opening it stores the token in
+a browser cookie and drops it from the address bar, so after that `http://127.0.0.1:7717/` works in that browser until
+Insight stops. **Every start makes a new token**: an old bookmark or another browser shows the page with no data (its
+API calls get 401) until you open the newly printed URL. Stop it with Ctrl+C.
+
+| Option | Default | Use it for |
+|---|---|---|
+| `--port N` | 7717 | another port (1024-65535). If it is taken, Insight tries the next 12 ports and prints the one it got. |
+| `--open` | off | open the printed URL in your browser |
+| `--repo PATH` | this repo | the agent repo whose lessons, persona and tier-0 loader it reads |
+| `--projects PATH` | `~/.claude/projects` | where Claude Code's transcripts live |
+
+To keep it running in the background, start it with `nohup bash insight/start.sh > ~/.insight.log 2>&1 &` and take
+the URL from `~/.insight.log`. One instance per machine is enough. It always follows the session that was active
+most recently, whichever repo that session ran in, and lists recent sessions along the bottom.
+
+### 5.2 What is on the screen
+
+| Panel | What it shows | What to do with it |
+|---|---|---|
+| **Header** | the agent's name (from `agent/IDENTITY.md`), the session's project, link state, clock | "LINK · ONLINE" means the live stream is connected |
+| **Context & budget** | the context window used by the live session, and a weekly spend gauge in API-list dollars (see 5.4) | high context means the session will soon compact or slow down: finish the step and `/wrap` |
+| **Lessons** | the newest team lessons, `T0` (trigger always loaded) or `on demand`; hover for the trigger question, click for the whole lesson | a quick look at what the team has learned recently |
+| **Skills engaged** | skills invoked this session, skill files touched, tool calls by type | a long session with zero skills invoked is the skills gate's cue |
+| **Alarm bar** | the current alarms, across the top of the centre column (5.3) | red is critical, act on it |
+| **Memory tiers** (cards around the gate) | reads, writes, searches and loads per tier: **Tier 0** identity (it should show `8 parts` loaded), **Tier 1** on-demand docs, **Tier 2** `memory/**` and auto memory, **Agent** role memory, definitions and the shared core | Tier 0 with fewer parts than configured means the persona did not fully load. Tier 2 activity at the start of a task means the librarian is doing its job |
+| **The gate** (centre) | model, state (`WORKING`, `HOLDING`, `STANDBY` or `STUCK`), last activity; a pip lights on its ring whenever a memory tier is touched; the ring speeds up, and smokes, when tokens burn fast | `STUCK` = repeated failures: step in and redirect |
+| **Activity** | turns, tool calls, faults, uptime, tool calls per prompt | |
+| **Team** | the lead and every subagent or teammate: type, role, whether the shared core arrived, status (running / idle / handed in / done / stale), tool calls and failures, memory hits per tier, skills, files, context, last tool | a teammate that is idle while its task is open, or has no core, needs a look |
+| **Team graph** | who spawned whom and who messaged whom, live | spot a teammate the lead never heard back from |
+| **Tool stream** | the latest tool calls with time and a short description; failures in red | |
+| **Files & folders** | the folders and files touched most | an edit to a file nobody expected |
+| **Faults** | the latest failed tool calls with their error text | read before you re-run anything |
+| **Recent sessions** (footer) | the last five sessions by project and time; `▸` marks the one shown | |
+
+Insight never reads message bodies between agents, spawn prompts or task descriptions: the team views show shape
+and status, not content.
+
+### 5.3 Alarms
+
+| Alarm | Fires when | Default |
+|---|---|---|
+| `PERSONA NOT IN CONTEXT` (critical) | fewer tier-0 parts reached the session than settings.json configures | any part missing |
+| `CONTEXT nn%` | the live context passes a share of `contextLimit` | warn 75 %, critical 90 % |
+| `STRUGGLING` / `STUCK` | repeated failures or retries ("friction") | warn 40, critical 70 |
+| `n FAILURES` | a burst of failed tool calls | 4 within the last 12 calls |
+| `BUDGET nn%` / `BUDGET SPENT` | the API-list-equivalent spend passes the weekly gauge | warn 85 % |
+| `PROMPT #n $x` | one prompt cost more than a set amount | $75 |
+| `NO SKILLS INVOKED` | a long session never invoked a skill | after 150 tool calls |
+| `QUIET` | nothing has happened for a while | 15 minutes |
+
+The browser tab title turns into an alarm marker while any critical alarm is up, so it is visible from another tab.
+
+### 5.4 Settings
+
+Edit `insight/config.json` (restart Insight to apply):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `contextLimit` | 1000000 | the context window the gauge measures against - set it to your model's window |
+| `budget.usd`, `budget.window` | 8000, week | the spend gauge. It is a **local gauge**, not a bill: set it to whatever amount should make you look |
+| `alerts.*` | see 5.3 | every alarm threshold |
+| `burn.hotTokPerMin`, `burn.blazeTokPerMin` | 1.5 M, 4 M | token rates at which the gate ring runs hot / blazes |
+| `team.activeMs`, `team.staleMs` | 60 s, 30 min | when an agent counts as running, and when as stale |
+| `historyDays`, `maxSessionsParsed` | 14, 40 | how far back it looks for sessions |
+| `toolsShown`, `filesShown`, `promptsShown` | 28, 16, 14 | list lengths |
+
+All dollar figures use the list prices in `insight/pricing.json` (estimates you can edit). On a subscription plan
+you are not billed per token, so read them as a measure of work done and of how expensive a habit is, not as an
+invoice.
+
+### 5.5 Privacy and security
+
+Transcripts hold everything anyone typed into Claude Code, pasted secrets included, so Insight is locked down:
+- it listens on `127.0.0.1` only and refuses any request whose `Host` is not `127.0.0.1` or `localhost`
+- every data request needs this launch's token, so other users and other processes on the same machine get nothing
+- cross-site requests are refused, and the page cannot be framed by another site
+- it makes no outbound connections and never reads Claude Code's credentials
+
+**Never** expose its port, tunnel it or put it behind a proxy. Details: section 7 and `insight/README.md`. To probe a
+running instance: `INSIGHT_TOKEN=<token> bash insight/test/security-probe.sh <port>` (the probe refuses port 7717,
+which is assumed to be a live dashboard, unless `PROBE_LIVE=1`).
+
+### 5.6 When something looks wrong
+
+| You see | Cause | Fix |
+|---|---|---|
+| the page loads but every panel is empty | the browser has no token for this launch | open the URL Insight printed at start |
+| "port 7717 is already in use" | another Insight (or something else) has the port | it moves to the next port by itself: use the URL it prints |
+| no session, or yesterday's | no transcripts where it looks | start a Claude Code session; or check `--projects` |
+| "lessons unavailable: ..." | `python3` missing, or `memory/` unreadable | see the reason shown; `python3 tools/memory_lint.py` |
+| "loader not found" on the Tier 0 card | `--repo` does not point at an agent repo | drop `--repo`, or point it at the repo root |
+| Tier 0 shows fewer parts than configured | the persona did not fully load | section 8, first row |
+
+---
+
+## 6. Writing memory by hand
 
 Memory files are plain markdown with frontmatter; `/wrap` writes them for you, but you can too. Run
 `python3 tools/memory_lint.py` after editing.
@@ -437,7 +570,7 @@ Never write secrets, credentials, customer data or anything private: memory is c
 
 ---
 
-## 6. Security model
+## 7. Security model
 
 ```mermaid
 flowchart TB
@@ -472,13 +605,13 @@ Report a suspected vulnerability to the repo owners privately rather than in a p
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | The agent does not know its name or the team | project hooks did not run | run `bash .claude/hooks/load-persona.sh 1 8 </dev/null \| head`; if that works, hooks are disabled for you (managed settings or a declined trust prompt) |
 | "PACKER FAILED" banner | `python3` missing or crashed | `python3 --version`; set `AGENT_PYTHON=/path/to/python3` |
-| "OVERFLOW" banner, or a part shows as a preview of a saved file | tier 0 is over budget | section 8 - trim `agent/` or set `tier0: false` on weaker lessons |
+| "OVERFLOW" banner, or a part shows as a preview of a saved file | tier 0 is over budget | section 9 - trim `agent/` or set `tier0: false` on weaker lessons |
 | "Member in this session: unknown" | no `git config user.name` and no `AGENT_MEMBER` | set one of them |
 | The librarian gate nags every prompt | the librarian was never dispatched this session | let the agent dispatch it, or waive with the command it prints |
 | `git-guard` blocks a command | it would discard uncommitted work | copy the file aside before editing, restore from the copy; or add `# git-guard-ok` after checking |
@@ -489,7 +622,7 @@ Report a suspected vulnerability to the repo owners privately rather than in a p
 
 ---
 
-## 8. Maintenance
+## 9. Maintenance
 
 - **Before every memory PR:** `python3 tools/memory_verify.py` - all PASS (WARN is informational).
 - **After a lesson tagged `review` / `verification` / `red-team` changes:** `python3 tools/agent_gen.py --all`, and
@@ -529,7 +662,7 @@ lists catch the names.
 
 ---
 
-## 9. Repository layout
+## 10. Repository layout
 
 ```
 agent/                 persona - tier 0 (CODEOWNERS)
@@ -550,12 +683,14 @@ agents-src/            role agent sources + CORE-AGENTS.md (the core every spawn
 tools/                 common, memory_index, memory_lint, memory_tools, memory_verify, agent_gen, init_agent, leak_scan
 insight/               local dashboard (node, loopback only)
 tests/                 run_all.py + suites + fixtures
-docs/                  ARCHITECTURE.md (how memory works), SPEC.md (the build contract)
+docs/                  ARCHITECTURE.md (how memory works), SPEC.md (the build contract),
+                       Agent_Team_Harness_Architecture.pdf + Shared_AI_Agent_Architecture_Overview.png (visual
+                       overviews), img/ (README screenshots)
 ```
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 **Can two members' agents talk to each other live?** No. Agent teams run inside one session, and Claude Code's
 cross-session messaging covers only your own sessions. Members share through merged memory.
