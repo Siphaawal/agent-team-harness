@@ -8,13 +8,17 @@ their own clone. What one member's session learns reaches every other member's s
 
 **Visual overviews** - for presenting the idea to a team:
 
+- [Training video](../../releases/download/v1.0/agent-team-harness-training.mp4) (MP4, 5 min 20 s, 48 MB - a
+  download from the [v1.0 release](../../releases/tag/v1.0), kept out of the repo so clones stay small): why a shared
+  agent, the architecture, setup, the librarian, the knowledge loop and `/wrap`. If you copied this repo into your
+  own organisation, attach the video to a release there - the links follow whichever repo hosts this README.
 - [Architecture slide deck](docs/Agent_Team_Harness_Architecture.pdf) (PDF, 13 slides): the problem it solves, the
   zero-infrastructure architecture, the session gates, the librarian, the cross-member knowledge loop, memory
   layout, agent teams, trust boundaries, tier-0 packing, Insight's security, and the daily workflow.
 - [One-page architecture overview](docs/Shared_AI_Agent_Architecture_Overview.png) (PNG infographic): the same
   system on a single page.
 
-Both are AI-generated summaries, so a few labels are approximate. Where they differ from this README or
+All three are AI-generated summaries, so a few labels are approximate. Where they differ from this README or
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the text documents are the reference.
 
 ---
