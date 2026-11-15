@@ -116,8 +116,9 @@ def rel(p, root):
 
 def git_stat(cwd):
     try:
+        # GIT_OPTIONAL_LOCKS=0: a diff must not take the user's index lock to refresh the index
         r = subprocess.run(["git", "-C", cwd, "diff", "--stat"], capture_output=True, text=True, timeout=2,
-                           stdin=subprocess.DEVNULL)
+                           stdin=subprocess.DEVNULL, env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
         lines = r.stdout.strip().splitlines() if r.returncode == 0 else []
         return lines[-1].strip() if lines else "no unstaged changes"
     except Exception as e:

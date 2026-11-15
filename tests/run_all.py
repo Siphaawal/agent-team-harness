@@ -16,7 +16,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable or "python3"
-TIMEOUT_S = 900          # per test; the mutation suite takes several minutes on a slow or busy machine
+TIMEOUT_S = 1800         # per test; the mutation suite takes several minutes on a slow or busy machine
 HOOK_SELFTESTS = [
     [".claude/hooks/git-guard.py", "test"],
     [".claude/hooks/heredoc-guard.py", "test"],

@@ -316,18 +316,90 @@ class TestMutations(unittest.TestCase):
          "team-gate.py"),
         ("team-gate.py", "    if len(seen) < WAIVER_BUILD_FILES:", "    if True:", "team-gate.py"),
         ("team-gate.py", "    return bool(name) and str(", "    return str(", "team-gate.py"),
-        ("git-guard.py", "        if n < REVIEW_MIN_LINES:", "        if True:", "git-guard.py"),
-        ("git-guard.py", "        carry = numstat(repo, [\"HEAD\", \"--\"] + list(paths))\n        under",
-         "        carry = numstat(repo, [\"--cached\"])\n        under", "git-guard.py"),
+        # a lead-call counter that went backwards (state reset) silences the nag until it passes the old value
+        ("team-gate.py", "0 <= calls - last < NAG_EVERY", "calls < last + NAG_EVERY", "team-gate.py"),
+        ("git-guard.py", "        if n != UNCOUNTED and n < REVIEW_MIN_LINES:", "        if True:", "git-guard.py"),
+        ("git-guard.py", "        carry = numstat(repo, [\"HEAD\", \"--\"] + list(paths))\n        # tracked",
+         "        carry = numstat(repo, [\"--cached\"])\n        # tracked", "git-guard.py"),
         # a NEW file staged by `git add` in the same line counts 0 (the untracked-file bypass)
-        ("git-guard.py", "    new = {p: file_lines(os.path.join(top, p)) for p in staged_by_add",
-         "    new = {p: 0 for p in staged_by_add", "git-guard.py"),
-        # a `git add` in the line counts the whole tree again (an unrelated unstaged file blocks a small commit)
-        ("git-guard.py", "        carry.update({p: head[p] for p in staged_by_add if p in head})",
-         "        carry.update(head if add_argvs else {})", "git-guard.py"),
+        ("git-guard.py", "            out[p] = file_lines(full, None if _STOP_AT[0] is None else _STOP_AT[0] - total)",
+         "            out[p] = 0", "git-guard.py"),
+        # a `git add` in the line counts the whole tree again (an unrelated unstaged file blocks a small commit, and
+        # a whole-tree diff runs on every add + commit)
+        ("git-guard.py", "        head = None\n        if all_flag:", "        head = None\n        if all_flag or add_argvs:",
+         "git-guard.py"),
+        # a plain commit diffs the whole tree (slow on a dirty tree, and it counts unstaged work)
+        ("git-guard.py", "        head = None\n        if all_flag:", "        head = None\n        if True:", "git-guard.py"),
+        # the add dry run on the REAL index (takes .git/index.lock; fails while another git holds it)
+        ("git-guard.py", "env=dict(os.environ, GIT_INDEX_FILE=private)", "env=None", "git-guard.py"),
+        # git status / diff run without GIT_OPTIONAL_LOCKS=0 (an opportunistic index refresh takes .git/index.lock)
+        ("git-guard.py", "    return dict(os.environ if env is None else env, GIT_OPTIONAL_LOCKS=\"0\")", "    return env",
+         "git-guard.py"),
+        # a failed dry run counts as nothing instead of `git add -A`
+        ("git-guard.py", "        return None\n    finally:\n        if tmpdir:",
+         "        return set()\n    finally:\n        if tmpdir:", "git-guard.py"),
+        # the index copy gets a fresh mtime: git's racy check is lost and a same-size edit counts 0
+        ("git-guard.py", "shutil.copy2(real, private)", "shutil.copyfile(real, private)", "git-guard.py"),
+        # a count that failed or timed out is allowed instead of treated as over the threshold
+        ("git-guard.py", "            n = UNCOUNTED\n", "            n = None\n", "git-guard.py"),
+        ("git-guard.py", "    _DEADLINE[0] = time.time() + COUNT_BUDGET_S", "    _DEADLINE[0] = None", "git-guard.py"),
+        # --no-renames: a pure `git mv` of a 400-line file counts 800
+        ("git-guard.py", "[\"diff\", \"--numstat\", \"-z\", \"-M\"]", "[\"diff\", \"--numstat\", \"-z\", \"--no-renames\"]",
+         "git-guard.py"),
+        # a renamed-then-edited file counts as entirely new (the rename source is left out of the diff)
+        ("git-guard.py", "    sources = sorted({renames[f] for f in files if renames and f in renames} - set(files))",
+         "    sources = []", "git-guard.py"),
+        # adds in OTHER repos counted as adds in this one
+        ("git-guard.py", " and (r == UNRESOLVED or same_repo(r, repo, cache))]", "]", "git-guard.py"),
+        # a glob pathspec commit does not cover the new file the add staged
+        ("git-guard.py", " or fnmatch.fnmatchcase(nf, norm(s))", "", "git-guard.py"),
         ("git-guard.py", "                from_file = True", "                pass", "git-guard.py"),
         ("git-guard.py", "            log(\"git-guard-errors.log\", \"review rule: commit repo unresolved (cd to a "
          "variable?), not counted\")", "            pass", "git-guard.py"),
+        # adds compared by DIRECTORY again: an add in a subdirectory of the commit's repo counts 0
+        ("git-guard.py", "    if same_dir(a, b):\n        return True\n    ta, tb = _toplevel(a, cache), _toplevel(b, cache)\n"
+         "    return ta is None or tb is None or ta == tb", "    return same_dir(a, b)", "git-guard.py"),
+        # an add whose repo cannot be resolved is dropped instead of counted
+        ("git-guard.py", "    return ta is None or tb is None or ta == tb", "    return ta is not None and ta == tb",
+         "git-guard.py"),
+        # bare braces stay in the segment ("}" and what follows it read as pathspecs)
+        ("git-guard.py", "    if \"{\" not in seg and \"}\" not in seg:\n        return [seg]",
+         "    if True:\n        return [seg]", "git-guard.py"),
+        # braces inside a quoted message taken as tokens
+        ("git-guard.py", "        elif c in \"'\\\"\":\n            q = c", "        elif False:\n            q = c", "git-guard.py"),
+        # a trailing `}` / `fi` / `)` taken as a pathspec
+        ("git-guard.py", "    while paths and paths[-1] in SHELL_TRAILERS:", "    while False:", "git-guard.py"),
+        # a magic pathspec or quote fragment no longer counts the whole tree
+        ("git-guard.py", "    odd = [p for p in paths if p.startswith(\":\") or \"'\" in p or '\"' in p]", "    odd = []",
+         "git-guard.py"),
+        # a file in HEAD, out of the index and written again counts only its deletion
+        ("git-guard.py", "    regrown = [p for p in files if p in head and p not in known]", "    regrown = []", "git-guard.py"),
+        # dry-run output that cannot be parsed is skipped instead of counting the add as -A
+        ("git-guard.py", "        else:\n            return None\n    return paths", "    return paths", "git-guard.py"),
+        ("git-guard.py", "    if chr(0xFFFD) in text:", "    if False:", "git-guard.py"),
+        # no read cap per file / per set of new files, no deadline inside a file
+        ("git-guard.py", "                if cap is not None and n >= cap:", "                if False:", "git-guard.py"),
+        ("git-guard.py", "        if _STOP_AT[0] is not None and total >= _STOP_AT[0]:", "        if False:", "git-guard.py"),
+        ("git-guard.py", "                if _DEADLINE[0] is not None and time.time() > _DEADLINE[0]:\n                    raise",
+         "                if False:\n                    raise", "git-guard.py"),
+        # one deadline per commit again, or none from the hook run, or the dirty-tree time not taken off the budget
+        ("git-guard.py", "    own = _DEADLINE[0] is None\n", "    own = True\n", "git-guard.py"),
+        ("git-guard.py", "    _DEADLINE[0], _STOP_AT[0] = time.time() + count_budget(spent), REVIEW_MIN_LINES",
+         "    _STOP_AT[0] = REVIEW_MIN_LINES", "git-guard.py"),
+        ("git-guard.py", "min(COUNT_BUDGET_S, HOOK_BUDGET_S - spent))", "COUNT_BUDGET_S)", "git-guard.py"),
+        # the dirty-tree status calls of one hook run do not share a budget
+        ("git-guard.py", "        t = min(t, _STATUS_DEADLINE[0] - time.time())", "        pass", "git-guard.py"),
+        # the private index copy is not removed after the dry run
+        ("git-guard.py", "        if tmpdir:\n            shutil.rmtree(tmpdir, ignore_errors=True)\n    paths = parse_dry_run",
+         "        if False:\n            shutil.rmtree(tmpdir, ignore_errors=True)\n    paths = parse_dry_run", "git-guard.py"),
+        # the stale-copy sweep removes young copies too / removes nothing
+        ("git-guard.py", "and now - e.stat(follow_symlinks=False).st_mtime > STALE_INDEX_COPY_S", "", "git-guard.py"),
+        ("git-guard.py", "                        shutil.rmtree(e.path, ignore_errors=True)", "                        pass",
+         "git-guard.py"),
+        # the dirty-tree git status runs without GIT_OPTIONAL_LOCKS=0
+        ("git-guard.py", "stdin=subprocess.DEVNULL, env=_git_env())", "stdin=subprocess.DEVNULL, env=None)", "git-guard.py"),
+        # a directory pathspec does not cover the new file under it
+        ("git-guard.py", " or nf.startswith(norm(s) + \"/\")", "", "git-guard.py"),
         ("heredoc-guard.py", "        if not fed:\n            return True", "        if False:\n            return True",
          "heredoc-guard.py"),
         # back to the whole-text regex: a commit message or echo that MENTIONS `python -` is blocked
@@ -335,6 +407,47 @@ class TestMutations(unittest.TestCase):
         # an empty heredoc on python's own segment counted as stdin
         ("heredoc-guard.py", " and i + 1 < len(w) and w[i + 1] != \"HD_EMPTY\":", ":", "heredoc-guard.py"),
         ("heredoc-guard.py", "    if writers and", "    if False and writers and", "heredoc-guard.py"),
+        # wrappers not skipped: `timeout 60 python -`, `uv run python -` ... pass again
+        ("heredoc-guard.py", "        if head not in WRAP:\n            return w, True",
+         "        if True:\n            return w, True", "heredoc-guard.py"),
+        # a wrapper's positional argument (timeout's DURATION) taken for the command word
+        ("heredoc-guard.py", "    return i + positional, True", "    return i, True", "heredoc-guard.py"),
+        # an unknown wrapper flag lets the segment through instead of falling back to the whole-text rule
+        ("heredoc-guard.py", "            if not piped and PY_STDIN.search(\" \".join(w)) and not fed_by(w):",
+         "            if False:", "heredoc-guard.py"),
+        # no work cap: a command full of unclosed '<<' runs the heredoc scans (and is allowed)
+        ("heredoc-guard.py", "    if markers * len(cmd) > MAX_HEREDOC_WORK:", "    if False:", "heredoc-guard.py"),
+        # a command with no '<<' runs the heredoc scan anyway
+        ("heredoc-guard.py", "    if \"<<\" not in cmd:\n        return slash, doubled, long_, writers\n", "",
+         "heredoc-guard.py"),
+        # the heredoc regex not anchored at a line start: quadratic on one long line
+        ("heredoc-guard.py", "HEREDOC = re.compile(r\"(?m)^(?P<head>", "HEREDOC = re.compile(r\"(?P<head>",
+         "heredoc-guard.py"),
+        # no newline lookahead after the tag's first letter (each of the three heredoc regexes): a long tag with no
+        # newline after it is retried at every shorter length
+        ("heredoc-guard.py", "(?P<tag>[A-Za-z_](?=[^\\n]*\\n)[A-Za-z0-9_]*)", "(?P<tag>[A-Za-z_][A-Za-z0-9_]*)",
+         "heredoc-guard.py"),
+        ("heredoc-guard.py", "([A-Za-z_](?=[^\\n]*\\n)[A-Za-z0-9_]*)\\1(?P<tail>", "([A-Za-z_][A-Za-z0-9_]*)\\1(?P<tail>",
+         "heredoc-guard.py"),
+        ("heredoc-guard.py", "([A-Za-z_](?=[^\\n]*\\n)[A-Za-z0-9_]*)\\1[^\\n]*\\n\\s*\\2",
+         "([A-Za-z_][A-Za-z0-9_]*)\\1[^\\n]*\\n\\s*\\2", "heredoc-guard.py"),
+        # the heredoc body tried at every newline of a run of blank lines
+        ("heredoc-guard.py", "(?P<body>(?:.*?\\S)??[^\\S\\n]*)", "(?P<body>.*?)", "heredoc-guard.py"),
+        # the tag not capped at the longest word alone on a line
+        ("heredoc-guard.py", "rx.pattern.replace(TAG_REST, \"[A-Za-z0-9_]{0,%d}\" % (n - 1))", "rx.pattern",
+         "heredoc-guard.py"),
+        # over the '<<' cap, '# heredoc-long-ok' allows before any other rule runs
+        ("heredoc-guard.py", "        why = whole_text_rules(cmd)", "        why = None", "heredoc-guard.py"),
+        ("heredoc-guard.py", "    if py and \"\\\\\\\\\" in cmd:\n", "    if False:\n", "heredoc-guard.py"),
+        ("heredoc-guard.py", "        if \"|\" not in cmd[start:m.start()] and", "        if False and",
+         "heredoc-guard.py"),
+        # wrappers outside the first table: setsid, `pyenv exec`, `flock <file> -c`, an unquoted Windows python path
+        ("heredoc-guard.py", "    \"setsid\": ({\"-c\", \"--ctty\", \"-f\", \"--fork\", \"-w\", \"--wait\"}, set(), set(), 0),\n",
+         "", "heredoc-guard.py"),
+        ("heredoc-guard.py", "\"pixi\": \"run\", \"pyenv\": \"exec\"}", "\"pixi\": \"run\"}", "heredoc-guard.py"),
+        ("heredoc-guard.py", "        if head in (\"-c\", \"--command\") and len(w) > 1 and depth < 3:", "        if False:",
+         "heredoc-guard.py"),
+        ("heredoc-guard.py", " and not EATEN_PY.fullmatch(w[0]):", ":", "heredoc-guard.py"),
         # TaskStop success judged by a word search: a description saying "error" is never recorded
         ("team-stall-gate.py", "    return isinstance(msg, str) and msg.strip().lower().startswith(STOP_OK)",
          "    return \"stopped\" in json.dumps(resp).lower() and \"error\" not in json.dumps(resp).lower()",
@@ -359,6 +472,11 @@ class TestMutations(unittest.TestCase):
         ("_teamlib.py", "SAFE_NAME.fullmatch(name)", "re.match(SAFE_NAME.pattern + \"$\", name)", "team-stall-gate.py"),
         # a teammate stopped while the watchdog runs stays in its watch set
         ("team-watchdog.py", "        watched &= names  ", "        pass  # ", "team-watchdog.py"),
+        # no grace after a stop: the transcript's last write right after TaskStop makes the teammate live again
+        ("_teamlib.py", "STOP_GRACE_S = 15.0 ", "STOP_GRACE_S = 0.0 ", "team-stall-gate.py"),
+        # TaskStop success judged by "contains" instead of "opens with"
+        ("team-stall-gate.py", "msg.strip().lower().startswith(STOP_OK)", "STOP_OK in msg.strip().lower()",
+         "team-stall-gate.py"),
     ]
 
     def test_each_guard_removed_fails_its_selftest(self):

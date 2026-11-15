@@ -286,6 +286,12 @@ def selftest():
         check("the success text as a plain string counts too",
               (stop_succeeded("Successfully stopped task: t2 (x)"), stop_succeeded({"message": "Task failed"})),
               (True, False))
+        check("the success text must OPEN the message, not just appear in it",
+              stop_succeeded({"message": "Error: no task t1 (successfully stopped task earlier?)"}), False)
+        check("a write inside STOP_GRACE_S after the stop still counts as stopped, one after it does not",
+              (T.is_stopped("x", {"mtime": 105.0}, {"x": 100.0}),
+               T.is_stopped("x", {"mtime": 100.0 + T.STOP_GRACE_S + 1}, {"x": 100.0}),
+               T.STOP_GRACE_S >= 5), (True, False, True))
         later = time.time() + T.STOP_GRACE_S + 5
         os.utime(os.path.join(sub, "agent-abuilder-api-1f2e.jsonl"), (later, later))
         check("a stopped teammate that writes again counts again",

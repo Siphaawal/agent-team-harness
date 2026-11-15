@@ -1,5 +1,77 @@
 # Changelog
 
+## v1.1.1 - 2026-11-15
+
+Fixes to the guard hooks, found by reviewing v1.1 again. Upgrading from v1.1: pull; nothing to configure.
+
+### Fixed
+
+**`git-guard.py` - the review rule no longer touches your index, and no longer slows every commit**
+
+- The `git add --dry-run` that tells what an add in the same line stages now runs on a private copy of the index
+  (`GIT_INDEX_FILE`, mtime kept), and every git call the hook makes sets `GIT_OPTIONAL_LOCKS=0`. In v1.1 the dry run
+  took the index lock: a concurrent git command could fail with "index.lock exists", and while another git held the
+  lock a new file was counted as 0 lines. Copies left behind by a killed hook are removed at a later hook start.
+- A commit runs only the diffs its shape needs (a plain commit: `git diff --cached` alone; an add and commit: the
+  added files; a pathspec commit: those paths; `-a`: the whole tree). v1.1 ran a whole-tree diff on every commit,
+  which took seconds on Windows on a tree with ~100 dirty files and could run past the hook timeout.
+- Counting has one time budget per hook run (3 s, fitted with the dirty-tree check under 9 s), shared by every commit
+  in the line. Reading new files stops once the review threshold is reached. A count that fails or times out is
+  logged and treated as over the threshold, never as 0.
+- Counts that were wrong in v1.1:
+  - a `git add` in a subdirectory of the same repository (`cd sub && git add f && cd .. && git commit`,
+    `git -C sub add f && git commit`) was not counted; an add in another repository still is not;
+  - shell braces around a commit (`{ git add f && git commit -m x; }`, `if ($?) { git commit ... }`) turned `}` into
+    a pathspec and the count into 0; a trailing `fi` / `done` / `)` is never a pathspec now;
+  - a file removed from the index, written again and re-added counted only its deletion;
+  - a new file whose name holds a newline or non-UTF-8 bytes counted 0; output of the dry run that cannot be parsed
+    is now logged and counted as `git add -A`;
+  - a magic pathspec (`:(glob)...`, `:!x`) failed the count; it now counts the whole tree (logged);
+  - a pure `git mv` counted twice the file's length (rename detection is on again).
+- Known limits, unchanged from v1.1. Not counted (the commit is allowed without a review): `git commit --amend`
+  beyond its new change; a `git mv`, `git rm` or a file created in the same line as the commit; an add whose
+  argument is a shell variable (`for f in ...; do git add $f; done`); an add run by `find -exec` or `xargs`; a
+  commit whose quoted message holds both braces and parentheses; git aliases and merge / cherry-pick / am / rebase.
+  Over-counted (a review is asked for needlessly): a new symlink; `git rm --cached f && git add f`; an add in a
+  directory outside any repository.
+
+**`heredoc-guard.py`**
+
+- Commands with long lines or long runs of blank lines are decided in milliseconds. In v1.1 (and v1.0) one 30 KB
+  line could take about 10 seconds, past the hook timeout, with or without a `<<` in it. Very long heredoc tags are
+  several times faster than in v1.1 but not bounded: a command holding two different words of thousands of letters,
+  each alone on a line, can still take seconds. The
+  heredoc patterns are anchored and bounded and match exactly what they matched before (checked against several
+  thousand generated commands); commands without `<<` skip the scan, and the scan runs once per call.
+- A command over the `<<` work cap is treated as file content and decided at once. `# heredoc-long-ok` lifts that
+  cap and nothing else: a doubled backslash in Python, a `python -` with nothing on stdin, a Python heredoc that
+  writes a file and a backtick in `python -c "..."` are still judged on the whole text, and so is a single
+  backslash (`# heredoc-ok` overrides that one). Over the cap these tests see the whole command, so a large C or
+  C++ heredoc with backslashes next to a Python call is blocked: write such files with the Write tool.
+- `python -` with nothing on stdin is blocked again behind a wrapper: `timeout`, `sudo`, `env`, `nice`, `xargs`,
+  `winpty`, `setsid`, `flock`, `doas`, `chronic`, `strace`, `taskset`, `uv` / `poetry` / `pipenv` / `conda` / `pdm` /
+  `hatch` / `rye` / `pixi run` and `pyenv exec` (the wrapper's own flags and arguments are skipped, not just its
+  name), and as an unquoted Windows path to `python.exe`. A wrapper flag the guard does not know falls back to the
+  whole-text test. `ssh host python -` is not a local stdin problem and stays allowed.
+- Known limit, unchanged from v1.1: when one line opens two heredocs (`cat <<'A'; python3 - <<'B'`), the body of
+  the second one is not checked.
+
+**Other hooks**
+
+- `team-gate.py`: a lead-call counter that went backwards (its state was reset) no longer silences the nag until
+  the count passes its old value; the nag follows the normal thresholds from the new count.
+- `session-log.py`: its `git diff --stat` sets `GIT_OPTIONAL_LOCKS=0` too.
+
+### Changed
+
+- Self-tests and `tests/test_team_gates.py`: many more cases, and a mutation entry for each guard above (the list
+  went from 27 to about 80 entries). `tests/run_all.py` gives each suite 30 minutes, because the mutation suite now
+  takes several minutes. The `heredoc-guard.py` self-test now has timing bounds (10 runs of each check within 2 s;
+  they take well under half a second on an idle machine): on a machine oversubscribed many times over they can fail
+  without anything being wrong - re-run it.
+- `git-guard.py`: the review-rule block message says "at least N changed lines", because counting stops at the
+  threshold.
+
 ## v1.1 - 2026-11-15
 
 Team gates, an optional Obsidian vault, a memory graph in Insight, and fixes to two guard hooks.

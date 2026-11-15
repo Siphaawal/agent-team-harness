@@ -187,7 +187,7 @@ def cmd_nag():
         if calls is None or calls < NAG_AFTER_CALLS:
             return 0
         last = st.get("nagged_at")
-        if isinstance(last, int) and calls < last + NAG_EVERY:
+        if isinstance(last, int) and 0 <= calls - last < NAG_EVERY:     # a counter that went BACK nags again
             return 0
     st["nagged_at"] = calls or 0
     save_state(sid, st)
@@ -282,6 +282,8 @@ def selftest():
         calls(s, NAG_AFTER_CALLS + NAG_EVERY + 3)            # a skipped count still nags (no exact modulus)
         check("nags again after NAG_EVERY even if a count was skipped", "TEAM GATE" in run(cmd_nag, {"session_id": s}), True)
         check("teammate session is never nagged", run(cmd_nag, {"session_id": s, "agent_id": "a1"}), "")
+        calls(s, NAG_AFTER_CALLS + 2)                        # the counter went BACK (its state was reset)
+        check("nags again after the counter went backwards", "TEAM GATE" in run(cmd_nag, {"session_id": s}), True)
 
         s = "s-stop"
         calls(s, BLOCK_AFTER_CALLS - 1)
