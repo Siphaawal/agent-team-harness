@@ -183,6 +183,14 @@ class TestParser(unittest.TestCase):
 
 class TestCommon(unittest.TestCase):
 
+    def test_validators_reject_a_trailing_newline(self):
+        # Python's `$` also matches just before a final "\n", so `^...$` + .match() accepted "x\n" (runs on every OS)
+        for rx, good in ((common.SLUG, "evil-one"), (common.FILE_SLUG, "evil-one"), (common.DATE, "2026-01-01")):
+            self.assertTrue(rx.match(good), rx.pattern)                   # positive control
+            for bad in (good + "\n", good + "\r\n", good + "\nx"):
+                self.assertIsNone(rx.match(bad), (rx.pattern, bad))
+        self.assertEqual(str(common.parse_date(" 2026-01-01 ")), "2026-01-01")   # parse_date still trims whitespace
+
     def test_repo_root_is_this_repo(self):
         self.assertTrue(os.path.isfile(os.path.join(common.repo_root(), "tools", "common.py")))
         self.assertEqual(os.path.normcase(common.repo_root()), os.path.normcase(REPO))
@@ -740,8 +748,8 @@ class TestHelpers(unittest.TestCase):
 # ---- the CLI contract, every tool ---------------------------------------------
 
 CLI_TOOLS = ("agent_gen.py", "common.py", "init_agent.py", "leak_scan.py", "memory_index.py", "memory_lint.py",
-             "memory_tools.py", "memory_verify.py")
-NEEDS_ARGS = ("agent_gen.py", "common.py", "init_agent.py", "memory_tools.py")
+             "memory_tools.py", "memory_verify.py", "obsidian_vault.py")
+NEEDS_ARGS = ("agent_gen.py", "common.py", "init_agent.py", "memory_tools.py", "obsidian_vault.py")
 RAN = re.compile(r"memory_verify: \d+ PASS|leak_scan: \d+ finding|lint: \d+ memories|memory_index: \d+ memories")
 TEMPLATE = "**Name:** {{AGENT_NAME}}\n**Team:** {{TEAM_NAME}}\n**Vibe:** {{VIBE}} {{EMOJI}}\n"
 
@@ -973,6 +981,51 @@ class TestAgentGen(unittest.TestCase):
         self.assertNotIn("good-one", text)
 
 
+SHIPPED_ROLES = ("adversary", "builder", "reviewer", "verifier")
+
+
+class TestShippedRoles(unittest.TestCase):
+    """The roles the repo ships, checked on a COPY of agents-src/, .claude/agents/ and memory/: every role is generated
+    and in sync, and a hand edit of a generated file is caught as drift for that role only."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="memtools-roles-")
+        self.root = tool_repo(self.tmp, memory=False)
+        ign = shutil.ignore_patterns("_gen")
+        shutil.copytree(os.path.join(REPO, "agents-src"), os.path.join(self.root, "agents-src"))
+        shutil.copytree(os.path.join(REPO, ".claude", "agents"), os.path.join(self.root, ".claude", "agents"))
+        shutil.copytree(os.path.join(REPO, "memory"), os.path.join(self.root, "memory"), ignore=ign)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_every_shipped_role_is_generated_and_in_sync(self):
+        rc, out, err = run_at(self.root, "agent_gen.py", "--check")
+        self.assertEqual((rc, err), (0, ""), out)
+        for role in SHIPPED_ROLES:
+            self.assertRegex(out, r"(?m)^%s\s+in sync\r?$" % role)                 # \r: Windows text-mode stdout
+            self.assertTrue(os.path.isfile(os.path.join(REPO, ".claude", "agent-memory", role, "MEMORY.md")), role)
+
+    def test_builder_definition_can_build_and_carries_its_contract(self):
+        text = common.read_text(os.path.join(self.root, ".claude", "agents", "builder.md"))
+        head = text.split("\n---\n", 1)[0]
+        self.assertRegex(head, r"(?m)^name: builder$")
+        self.assertRegex(head, r"(?m)^memory: project$")
+        self.assertRegex(head, r"(?m)^tools: .*\bWrite\b.*\bEdit\b")              # a builder must be able to write
+        self.assertIn("role-common v1", text)                                     # the shared include expanded
+        self.assertIn("tagged `build`", text)
+        self.assertNotIn("{{", text)
+
+    def test_hand_edit_of_a_generated_role_is_drift(self):
+        path = os.path.join(self.root, ".claude", "agents", "builder.md")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("a line added by hand\n")
+        rc, out, err = run_at(self.root, "agent_gen.py", "--check")
+        self.assertEqual((rc, err), (1, ""), out)
+        self.assertRegex(out, r"(?m)^builder\s+DRIFT")
+        self.assertRegex(out, r"(?m)^reviewer\s+in sync\r?$")                      # only the edited role drifts
+
+
 # ---- memory_verify.py ---------------------------------------------------------
 
 class TestVerify(unittest.TestCase):
@@ -1197,6 +1250,19 @@ class TestUnsafeNames(TempRepo):
         self.assertTrue(rows[0]["errors"])
         rc, out = call(memory_tools.main, "--root", self.root, "search", "zebraquux")
         self.assertIn("no matches", out)                                  # never opened, so never found
+
+    def test_trailing_newline_name_is_rejected(self):
+        # `$` with .match() also matches before ONE final "\n": "evil-one\n" passed as a clean slug. Linux/macOS can
+        # hold the name; Windows cannot (skipped there - test_validators_reject_a_trailing_newline covers the regex)
+        make_or_skip(self, os.path.join(self.mem, "topics", "evil-one\n.md"), memo("evil-one"))
+        write(os.path.join(self.mem, "topics", "good-one.md"), memo("good-one"))
+        got = {m.slug: m.rejected for m in common.iter_memories(self.mem, rejected=True)}
+        self.assertIs(got.get("good-one"), False)                         # positive control
+        self.assertNotIn("evil-one\n", got)                               # never a clean slug...
+        self.assertEqual([s for s, rej in got.items() if "evil-one" in s and rej], ["'evil-one\\n.md'"], got)  # ...rejected
+        rc, out, err = run3("memory_lint.py", "--root", self.root, "--today", TODAY)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(b"unsafe file name", out)
 
     def test_verify_fails_on_a_control_character_in_a_path(self):
         root = tool_repo(self.tmp)

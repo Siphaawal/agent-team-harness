@@ -114,7 +114,8 @@ class InsightServer(unittest.TestCase):
             [NODE, str(INSIGHT / "server.mjs"), "--port", str(cls.port), "--repo", str(FIXTURE),
              "--projects", str(cls.projects)],
             stdin=subprocess.DEVNULL, stdout=cls.log, stderr=subprocess.STDOUT, cwd=cls.tmp,
-            env={**os.environ, "INSIGHT_TOKEN": TOKEN})      # a pinned token is for TESTS only
+            # a pinned token is for TESTS only; the vault dir points at nothing, so no real vault can leak in
+            env={**os.environ, "INSIGHT_TOKEN": TOKEN, "AGENT_VAULT_DIR": str(Path(cls.tmp) / "no-vault")})
         deadline = time.time() + 20
         while time.time() < deadline:
             if cls.proc.poll() is not None:
@@ -313,7 +314,7 @@ class InsightServer(unittest.TestCase):
     # ---------------------------------------------------------------- token auth
 
     def test_api_requires_the_token(self):
-        for path in ("/api/state", "/api/stream", "/api/lesson/verify-the-negative-case", "/api/agent/x"):
+        for path in ("/api/state", "/api/stream", "/api/lesson/verify-the-negative-case", "/api/agent/x", "/api/memgraph"):
             self.assertEqual(self.request(path, auth=False, read=False)[0], 401, path + " without a token")
             self.assertEqual(self.request(path, {"Authorization": "Bearer " + TOKEN[:-1] + "x"}, read=False)[0], 401, path + " wrong token")
             self.assertEqual(self.request(path, {"Cookie": "insight=" + TOKEN + "zz"}, read=False)[0], 401, path + " long cookie")
@@ -376,6 +377,27 @@ class InsightServer(unittest.TestCase):
             self.assertEqual(status, code, path)
             for k, v in want.items():
                 self.assertEqual(h.get(k), v, f"{k} on {path} ({status})")
+
+    def test_memgraph_of_the_fixture(self):
+        status, hdrs, body = self.request("/api/memgraph")
+        self.assertEqual(status, 200)
+        self.assertTrue(hdrs["content-type"].startswith("application/json"))
+        g = json.loads(body)
+        self.assertNotIn("error", g, g)
+        ids = {n["id"] for n in g["nodes"]}
+        self.assertEqual(ids, {"deploy-runbook", "api-naming-rule", "read-the-live-value", "verify-the-negative-case",
+                               "comment-after-values", "broken-no-trigger", "old-superseded-lesson"})
+        edges = {(e["a"], e["b"], e["kind"]) for e in g["edges"]}
+        # [[read-the-live-value]] in the description and [[api-naming-rule]] in the body; [[no-such-memory]] dangles
+        self.assertIn(("deploy-runbook", "read-the-live-value", "link"), edges)
+        self.assertIn(("deploy-runbook", "api-naming-rule", "link"), edges)          # a = the file holding the link
+        self.assertIn(("old-superseded-lesson", "verify-the-negative-case", "supersedes"), edges)
+        self.assertGreaterEqual(g["dangling"], 1)
+        kinds = {n["id"]: n["kind"] for n in g["nodes"]}
+        self.assertEqual(kinds["deploy-runbook"], "topic")
+        self.assertEqual(kinds["read-the-live-value"], "lesson")
+        # no vault linked to the fixture: no OBSIDIAN button
+        self.assertEqual(g["obsidian"], {"available": False, "vault": ""})
 
     def test_page_is_csp_clean(self):
         # nothing the policy blocks: no inline script/style, no on* handlers, no javascript: URLs, no remote origins
@@ -502,6 +524,21 @@ class MemtierUnits(unittest.TestCase):
         self.assertIn("failed", r["r"]["error"])
         self.assertIsNone(r["one"])
 
+    def test_a_spawn_that_throws_is_an_error_value_not_a_stuck_cache(self):
+        # execFile can throw SYNCHRONOUSLY (a NUL in its cwd on every OS; a .bat/.cmd interpreter on Windows): that
+        # must come back as "lessons unavailable", and a second refresh must run again rather than replay a rejection
+        code = ("const m = await import(process.argv[1]); m.setRepo('bad\\u0000repo');"
+                "const a = await m.fetchLessons().catch((e) => 'REJECTED ' + e.code);"
+                "const b = await m.one('verify-the-negative-case').catch((e) => 'REJECTED ' + e.code);"
+                "const c = await m.one('verify-the-negative-case').catch((e) => 'REJECTED ' + e.code);"
+                "console.log(JSON.stringify({a, b, c, sum: m.summary()}))")
+        r = node_eval(code, self.LESSONS)
+        self.assertIsInstance(r["a"], dict, r)
+        self.assertTrue(r["a"]["error"].startswith("lessons unavailable: "), r)
+        self.assertIsNone(r["b"], r)
+        self.assertIsNone(r["c"], r)
+        self.assertIn("lessons unavailable", r["sum"].get("error", ""), r)
+
     def test_real_tool_gives_the_lessons_the_tool_parser_sees(self):
         code = ("const m = await import(process.argv[1]); m.setRepo(process.argv[2]); const r = await m.fetchLessons(process.argv[2]); "
                 "console.log(JSON.stringify(r))")
@@ -529,6 +566,286 @@ class MemtierUnits(unittest.TestCase):
                 "'lessons/a.txt', '', null, 'lessons', '/etc/passwd', 'topics/a.md'].map((f) => m.lessonPath(r, f) ? 'in' : 'out')))")
         self.assertEqual(node_eval(code, self.LESSONS, str(FIXTURE)),
                          ["in", "in", "out", "out", "out", "out", "out", "out", "out", "out"])
+
+
+HOSTILE_TEXT = '<img src=x onerror=alert(1)>"\';</script><script>alert(2)</script>'
+
+
+@unittest.skipUnless(NODE, "node not found on PATH")
+class MemoryGraph(unittest.TestCase):
+    """/api/memgraph against a copy of the fixture with hostile memories, and an Obsidian vault linked to it.
+    Memory arrives through other members' pull requests: names and frontmatter are attacker-controlled."""
+    MEMGRAPH = (INSIGHT / "lib" / "memgraph.mjs").as_uri()
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import obsidian_vault
+        cls.tmp = tempfile.mkdtemp(prefix="insight-memgraph-")
+        cls.repo = Path(cls.tmp) / "repo"
+        shutil.copytree(FIXTURE, cls.repo)
+        topics = cls.repo / "memory" / "topics"
+        # an unsafe FILE NAME: never opened, never shown, only counted
+        (topics / "bad name';alert(1).md").write_text("---\nname: x\n---\nnever read\n", encoding="utf-8")
+        if os.name != "nt":
+            (topics / "line\nbreak.md").write_text("---\nname: y\n---\n", encoding="utf-8")
+        # a safe file name with hostile frontmatter and body
+        (topics / "hostile-text.md").write_text(
+            "---\nname: \"%s\"\ndescription: \"%s\"\nmetadata:\n  type: \"%s\"\n  tags: [ok-tag, \"<b>\", \"UPPER\"]\n"
+            "  status: active\n  author: alex\n  created: 2026-10-26\n---\n[[../../etc/passwd]] [[<script>]] "
+            "[[deploy-runbook]]\n" % ("<b>n</b>", HOSTILE_TEXT.replace('"', "'"), "<i>"), encoding="utf-8")
+        cls.vault = Path(cls.tmp) / "vault-x"
+        (cls.vault / ".obsidian").mkdir(parents=True)
+        obsidian_vault.make_dir_link(str(cls.repo / "memory"), str(cls.vault / "memory"))
+        cls.port = free_port()
+        cls.log = open(Path(cls.tmp) / "server.log", "wb")
+        cls.proc = subprocess.Popen(
+            [NODE, str(INSIGHT / "server.mjs"), "--port", str(cls.port), "--repo", str(cls.repo),
+             "--projects", str(Path(cls.tmp) / "projects")],
+            stdin=subprocess.DEVNULL, stdout=cls.log, stderr=subprocess.STDOUT, cwd=cls.tmp,
+            env={**os.environ, "INSIGHT_TOKEN": TOKEN, "AGENT_VAULT_DIR": str(cls.vault)})
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if cls.proc.poll() is not None:
+                raise RuntimeError("server exited early")
+            try:
+                if cls.get("/")[0] == 200:
+                    return
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError("server did not answer within 20 s")
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            if cls.proc and cls.proc.poll() is None:
+                cls.proc.terminate()
+                try:
+                    cls.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    cls.proc.kill()
+                    cls.proc.wait(timeout=5)
+        finally:
+            cls.log.close()
+            import obsidian_vault
+            obsidian_vault.remove_link(str(cls.vault / "memory"))       # the link only; never followed
+            shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @classmethod
+    def get(cls, path, auth=True):
+        c = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=15)
+        try:
+            c.request("GET", path, headers={"Authorization": "Bearer " + TOKEN} if auth else {})
+            r = c.getresponse()
+            return r.status, r.read()
+        finally:
+            c.close()
+
+    def graph(self):
+        status, body = self.get("/api/memgraph")
+        self.assertEqual(status, 200)
+        g = json.loads(body)
+        self.assertNotIn("error", g, g)
+        return g
+
+    def test_auth_required(self):
+        self.assertEqual(self.get("/api/memgraph", auth=False)[0], 401)
+        self.assertEqual(self.get("/api/memgraph")[0], 200)                       # positive control
+
+    def test_hostile_names_never_become_nodes_or_edges(self):
+        g = self.graph()
+        ids = {n["id"] for n in g["nodes"]}
+        self.assertIn("hostile-text", ids)                                         # the FILE slug, not `name:`
+        self.assertIn("deploy-runbook", ids)
+        for i in ids:
+            self.assertRegex(i, r"^[a-z0-9][a-z0-9-]{0,63}\Z")
+        self.assertGreaterEqual(g["rejected"], 1)                                  # the unsafe file name, counted
+        self.assertNotIn("alert(1)'", json.dumps(g))                               # ...and its name never echoed
+        for e in g["edges"]:
+            self.assertIn(e["a"], ids)
+            self.assertIn(e["b"], ids)
+        edges = {(e["a"], e["b"], e["kind"]) for e in g["edges"]}
+        self.assertIn(("hostile-text", "deploy-runbook", "link"), edges)          # positive control: a real link
+        self.assertGreaterEqual(g["dangling"], 2)                                  # ../../etc/passwd, <script>
+
+    def test_hostile_text_is_data_not_markup(self):
+        n = {x["id"]: x for x in self.graph()["nodes"]}["hostile-text"]
+        self.assertIn("<img src=x onerror=alert(1)>", n["description"])          # delivered verbatim, as text
+        self.assertEqual(n["tags"], ["ok-tag"])                                    # "<b>" and "UPPER" dropped
+        self.assertEqual(n["type"], "")                                            # "<i>" is not a type
+        # the page renders memory text with textContent / fillText only (test_page_is_csp_clean bans innerHTML)
+        src = (INSIGHT / "public" / "memgraph.js").read_text(encoding="utf-8")
+        self.assertIn("textContent", src)
+        self.assertIn("encodeURIComponent", src)
+
+    def test_obsidian_button_when_a_vault_links_this_repo(self):
+        self.assertEqual(self.graph()["obsidian"], {"available": True, "vault": "vault-x"})
+
+    def test_sanitise_caps_and_drops(self):
+        code = ("const m = await import(process.argv[1]); "
+                "const bad = [{id: '../x'}, {id: 'BAD'}, {id: '<b>'}, {id: 'a\\nb'}, null, {id: 'x'.repeat(65)}];"
+                "const nodes = bad.concat(Array.from({length: 500}, (_, i) => ({id: 'n' + i, kind: 'topic', tags: ['a', '<x>'], description: 'd\\u0007'})));"
+                "nodes.push({id: 'n1'});"
+                "const edges = [{a: 'n0', b: 'n1', kind: 'link'}, {a: 'n0', b: 'zz', kind: 'link'}, {a: 'n0', b: 'n0', kind: 'link'},"
+                " {a: 'n0', b: 'n2', kind: 'javascript'}, {a: 'n0', b: 'n499', kind: 'tag'}];"
+                "const r = m.sanitise({nodes, edges, total: 503, obsidian: {available: true, vault: '../evil'}});"
+                "const e = m.sanitise({error: 'KeyError'});"
+                "console.log(JSON.stringify({n: r.nodes.length, max: m.MAX_NODES, edges: r.edges, tags: r.nodes[0].tags,"
+                " first: r.nodes[0].id, bad: r.nodes.filter((x) => !/^n\\d+$/.test(x.id)).map((x) => x.id),"
+                " desc: r.nodes[0].description, ob: r.obsidian, trunc: r.truncated, e}))")
+        r = node_eval(code, self.MEMGRAPH)
+        self.assertEqual(r["n"], r["max"])
+        self.assertEqual(r["bad"], [])                                             # unsafe ids (listed FIRST) dropped
+        self.assertEqual(r["first"], "n0")                                         # positive control
+        self.assertEqual(r["edges"], [{"a": "n0", "b": "n1", "kind": "link"}])    # n499 was cut by the cap
+        self.assertEqual(r["tags"], ["a"])
+        self.assertEqual(r["desc"], "d ")                                          # control character blanked
+        self.assertEqual(r["ob"], {"available": False, "vault": ""})               # a vault name with a slash
+        self.assertGreaterEqual(r["trunc"], 100)
+        self.assertEqual(r["e"]["error"], "graph unavailable: KeyError")
+
+    def test_sanitise_takes_strings_only(self):
+        # String(x) turned a missing id into "undefined" and ['arr'] into "arr" - both pass the id pattern
+        code = ("const m = await import(process.argv[1]); "
+                "const r = m.sanitise({nodes: [{kind: 'topic'}, {id: ['arr']}, {id: {toString: () => 'obj'}},"
+                " {id: 'ok-node', created: ['2026-01-01'], type: ['reference'], status: ['active'], description: ['d'],"
+                "  tags: [['a'], 'b']}, {id: 'ok-two', created: '2026-01-02'}],"
+                " edges: [], obsidian: {available: true, vault: ['vault-x']}});"
+                "const e = m.sanitise({error: ['KeyError']});"
+                "console.log(JSON.stringify({r, e}))")
+        r = node_eval(code, self.MEMGRAPH)
+        self.assertEqual([n["id"] for n in r["r"]["nodes"]], ["ok-node", "ok-two"])
+        ok = r["r"]["nodes"][0]
+        self.assertEqual((ok["created"], ok["type"], ok["status"], ok["description"], ok["tags"]),
+                         (None, "", "", "", ["b"]))
+        self.assertEqual(r["r"]["nodes"][1]["created"], "2026-01-02")                 # positive control
+        self.assertEqual(r["r"]["obsidian"], {"available": False, "vault": ""})
+        self.assertEqual(r["e"]["error"], "graph unavailable: bad output from the graph builder")
+
+    def test_a_spawn_that_throws_does_not_wedge_the_graph(self):
+        # execFile can throw SYNCHRONOUSLY (a NUL in its cwd on every OS; a .bat/.cmd interpreter on Windows):
+        # graph() must answer with an error value, and keep answering, instead of replaying one rejected promise
+        code = ("const m = await import(process.argv[1]); m.setRepo('bad\\u0000repo');"
+                "const f = await m.fetchGraph().catch((e) => 'REJECTED ' + e.code);"
+                "const a = await m.graph().catch((e) => 'REJECTED ' + e.code);"
+                "const b = await m.graph().catch((e) => 'REJECTED ' + e.code);"
+                "console.log(JSON.stringify({f, a, b}))")
+        r = node_eval(code, self.MEMGRAPH)
+        for k in ("f", "a", "b"):
+            self.assertIsInstance(r[k], dict, r)
+            self.assertTrue(r[k]["error"].startswith("graph unavailable: "), r)
+
+    def test_builder_caps_and_refuses_a_root_outside_the_repo(self):
+        py = [sys.executable, "-I", str(INSIGHT / "lib" / "memgraph.py")]
+        env = {k: v for k, v in os.environ.items() if k != "AGENT_TOOLS_ANY_ROOT"}
+        r = subprocess.run(py + ["--root", str(self.repo)], capture_output=True, text=True, env=env,
+                           stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(json.loads(r.stdout)["error"], "OutsideRepo")            # a temp dir is outside the repo
+        r = subprocess.run(py + ["--root", str(self.repo), "--max-nodes", "2"], capture_output=True, text=True,
+                           env={**env, "AGENT_TOOLS_ANY_ROOT": "1"}, stdin=subprocess.DEVNULL, timeout=60)
+        g = json.loads(r.stdout)
+        self.assertEqual(len(g["nodes"]), 2)
+        self.assertEqual(g["truncated"], g["total"] - 2)
+        # the builder filters on its own, not only behind the server's sanitise()
+        r = subprocess.run(py + ["--root", str(self.repo)], capture_output=True, text=True,
+                           env={**env, "AGENT_TOOLS_ANY_ROOT": "1"}, stdin=subprocess.DEVNULL, timeout=60)
+        n = {x["id"]: x for x in json.loads(r.stdout)["nodes"]}
+        self.assertEqual(n["hostile-text"]["tags"], ["ok-tag"])
+        self.assertEqual(n["hostile-text"]["type"], "")
+        self.assertTrue(all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", i) for i in n))
+        self.assertIn("deploy-runbook", n)                                         # positive control
+        r = subprocess.run(py + ["--max-nodes", "0"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(r.returncode, 64)
+
+
+class MemoryGraphNames(unittest.TestCase):
+    """The graph builder on its own (no node needed): a name that is slug-clean except for a trailing newline."""
+
+    def test_tag_pattern_rejects_a_trailing_newline(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("memgraph_under_test", INSIGHT / "lib" / "memgraph.py")
+        mg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mg)
+        self.assertTrue(mg.TAG.match("ok-tag"))                                     # positive control
+        self.assertIsNone(mg.TAG.match("ok-tag\n"))
+
+    def test_trailing_newline_file_name_is_never_a_node(self):
+        # `$` with .match() accepts "evil-one\n": on Linux/macOS that file became node id "evil-one\n". Windows cannot
+        # hold the name, so this case is skipped there (the regex tests above and in test_memory_tools run everywhere)
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "repo"
+            shutil.copytree(FIXTURE, repo)
+            try:
+                (repo / "memory" / "topics" / "evil-one\n.md").write_text(
+                    "---\nname: evil-one\ndescription: x [[deploy-runbook]]\nmetadata:\n  status: active\n---\n",
+                    encoding="utf-8")
+            except (OSError, ValueError) as e:
+                self.skipTest("this filesystem cannot hold a newline in a file name (%s)" % type(e).__name__)
+            r = subprocess.run([sys.executable, "-I", str(INSIGHT / "lib" / "memgraph.py"), "--root", str(repo)],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60,
+                               env={**os.environ, "AGENT_TOOLS_ANY_ROOT": "1"})
+            g = json.loads(r.stdout)
+            ids = [n["id"] for n in g["nodes"]]
+            self.assertIn("deploy-runbook", ids)                                    # positive control
+            self.assertNotIn("evil-one\n", ids)
+            self.assertTrue(all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", i) for i in ids), ids)
+            self.assertGreaterEqual(g["rejected"], 1)
+
+
+@unittest.skipUnless(NODE, "node not found")
+class SpawnThatThrows(unittest.TestCase):
+    """AGENT_PYTHON pointing at a .bat makes execFile throw synchronously (EINVAL) on Windows: the server must start
+    and report the lessons box and the graph as unavailable, never crash."""
+
+    def test_server_survives_a_bat_python(self):
+        with tempfile.TemporaryDirectory() as d:
+            bat = Path(d) / "fakepy.bat"
+            bat.write_text("@echo garbage\r\n")
+            port, token = free_port(), "spawn-token-" + os.urandom(8).hex()
+            log = open(Path(d) / "server.log", "wb")
+            proc = subprocess.Popen([NODE, str(INSIGHT / "server.mjs"), "--port", str(port), "--repo", str(FIXTURE),
+                                     "--projects", d], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                    cwd=d, env={**os.environ, "INSIGHT_TOKEN": token, "AGENT_PYTHON": str(bat)})
+
+            def get(path):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                try:
+                    c.request("GET", path, headers={"Authorization": "Bearer " + token})
+                    r = c.getresponse()
+                    return r.status, r.read()
+                finally:
+                    c.close()
+            try:
+                deadline, state = time.time() + 20, None
+                while time.time() < deadline:
+                    if proc.poll() is not None:
+                        break
+                    try:
+                        s, body = get("/api/state")
+                        state = json.loads(body)
+                        if s == 200 and "error" in state.get("lessons", {}):
+                            break
+                    except (OSError, ValueError):
+                        pass
+                    time.sleep(0.3)
+                time.sleep(0.5)          # an unhandled rejection from the startup refresh would have exited by now
+                log.flush()
+                self.assertIsNone(proc.poll(), "server exited: " + (Path(d) / "server.log").read_text(errors="replace")[-600:])
+                self.assertIn("lessons unavailable", state["lessons"]["error"])
+                s, body = get("/api/memgraph")
+                self.assertEqual(s, 200)
+                self.assertTrue(json.loads(body)["error"].startswith("graph unavailable: "))
+                self.assertIsNone(proc.poll())
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                log.close()
 
 
 @unittest.skipUnless(NODE and shutil.which("bash"), "node and bash are needed")
@@ -696,6 +1013,13 @@ class NothingPersonal(unittest.TestCase):
 
     def test_start_script_present(self):
         self.assertTrue((INSIGHT / "start.sh").is_file())
+
+
+if os.name != "nt":
+    # Node refuses to spawn a .bat/.cmd directly only on Windows. Elsewhere the case does not exist, so it is not
+    # collected at all: a skip would make run_all report this suite as "not verified" on every Linux machine. The
+    # synchronous-throw path itself is covered on every OS by the two spawn-that-throws unit tests above.
+    del SpawnThatThrows
 
 
 if __name__ == "__main__":

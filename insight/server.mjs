@@ -7,6 +7,7 @@
 //   GET /              the dashboard
 //   GET /api/state     one snapshot (JSON)
 //   GET /api/stream    Server-Sent Events, pushed whenever the active transcript grows
+//   GET /api/memgraph  the repo's memory as a graph (+ whether an Obsidian vault is linked to it)
 //
 // --repo is the agent repo whose lessons and tier-0 loader the panels read (default: two levels up from this
 // file). --projects overrides the transcript root (default ~/.claude/projects).
@@ -28,6 +29,7 @@ import { alertsFor } from './lib/alerts.mjs';
 import * as memtier from './lib/memtier.mjs';
 import * as team from './lib/team.mjs';
 import * as lessons from './lib/lessons.mjs';
+import * as memgraph from './lib/memgraph.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, 'public');
@@ -56,6 +58,7 @@ lessons.setRepo(REPO);
 lessons.summary(0);           // starts the first tool call now, so the first page load is not "loading"
 memtier.setRepo(REPO);
 team.setRepo(REPO);
+memgraph.setRepo(REPO);
 
 const pricing = JSON.parse(await fsp.readFile(path.join(HERE, 'pricing.json'), 'utf8'));
 const config = JSON.parse(await fsp.readFile(path.join(HERE, 'config.json'), 'utf8'));
@@ -539,6 +542,17 @@ const server = http.createServer(async (req, res) => {
     try { d = await lessons.one(ls[1]); } catch (e) { logFault('lesson detail', e); d = null; }
     res.writeHead(d ? 200 : 404, { 'content-type': MIME['.json'], 'cache-control': 'no-store' });
     return res.end(JSON.stringify(d || { error: 'no such lesson' }));
+  }
+
+  /* MEMORY GRAPH: the repo's memories as nodes, [[links]] / supersedes / shared tags as edges, plus whether an
+     Obsidian vault (tools/obsidian_vault.py) is linked to this repo. Built at request time by
+     lib/memgraph.py (cached 30 s), capped and re-shaped by lib/memgraph.mjs. Fetched by the page on its own
+     timer so /api/state stays lean. Memory text is untrusted: the page renders it with textContent only. */
+  if (url.pathname === '/api/memgraph') {
+    let d;
+    try { d = await memgraph.graph(); } catch (e) { logFault('memgraph', e); d = { nodes: [], edges: [], error: 'graph unavailable' }; }
+    res.writeHead(200, { 'content-type': MIME['.json'], 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(d));
   }
 
   if (url.pathname === '/api/stream') {

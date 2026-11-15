@@ -8,8 +8,8 @@ their own clone. What one member's session learns reaches every other member's s
 
 **Visual overviews** - for presenting the idea to a team:
 
-- [Training video](../../releases/download/v1.0/agent-team-harness-training.mp4) (MP4, 5 min 20 s, 48 MB - a
-  download from the [v1.0 release](../../releases/tag/v1.0), kept out of the repo so clones stay small): why a shared
+- [Training video](../../releases/download/v1.0/agent-team-harness-training.mp4) (MP4, 5 min 20 s, 48 MB, recorded
+  for v1.0 - a download from the [v1.0 release](../../releases/tag/v1.0), kept out of the repo so clones stay small): why a shared
   agent, the architecture, setup, the librarian, the knowledge loop and `/wrap`. If you copied this repo into your
   own organisation, attach the video to a release there - the links follow whichever repo hosts this README.
 - [Architecture slide deck](docs/Agent_Team_Harness_Architecture.pdf) (PDF, 13 slides): the problem it solves, the
@@ -23,13 +23,40 @@ All three are AI-generated summaries, so a few labels are approximate. Where the
 
 ---
 
+## What's new in v1.1
+
+Full list: [CHANGELOG.md](CHANGELOG.md). Upgrading from v1.0: [see the note at the end of this section](#upgrading-from-v10).
+
+- **Team gates** - three hooks that make parallel work get named teammates and make an idle or silent teammate
+  visible: `team-gate.py`, `team-stall-gate.py` and `team-watchdog.py`. See [2.8](#28-team-gates).
+- **Obsidian vault** - `tools/obsidian_vault.py` sets up a locked-down Obsidian vault, outside the repo, for reading
+  the team memory as a graph. See [3.5](#35-reading-the-memory-in-obsidian-optional).
+- **Insight memory graph** - a new panel drawing every memory and lesson and the links between them, with an
+  OBSIDIAN button when the vault exists. See [5.7](#57-the-memory-graph).
+- **Guard fixes** - `git-guard.py` counts a commit's size from the parsed commit and asks for a reviewer on a large
+  one; `heredoc-guard.py` blocks two more content-corrupting patterns and reports repeat blocks.
+- **Skill updates** - the `team-lead` and `wrap` skills and the `reviewer` role agent were revised.
+- **`builder` role agent** - builders now spawn as a generated role (`subagent_type: "builder"`) with the build
+  contract, the team's lessons tagged `build` and a shared role memory, like reviewer, verifier and adversary.
+
+### Upgrading from v1.0
+
+1. Pull. The new hooks are already wired by the committed `.claude/settings.json`; there is nothing to add by hand
+   (if you changed `settings.json` locally, merge the new `team-gate.py`, `team-stall-gate.py` entries and the
+   `team-watchdog.py` allowlist lines from the committed version).
+2. Run `python3 tests/run_all.py` and `python3 tools/memory_verify.py`; both should be clean.
+3. The vault and the memory graph are optional: nothing changes until you run `tools/obsidian_vault.py setup` or open
+   Insight.
+
+---
+
 ## Contents
 
 1. [What you get](#1-what-you-get)
-2. [How it works](#2-how-it-works) - architecture, one session, the knowledge loop, tier 0, agent teams, Insight
-3. [Getting started](#3-getting-started) - prerequisites, team setup (once), member setup, first session
+2. [How it works](#2-how-it-works) - architecture, one session, the knowledge loop, tier 0, agent teams, Insight, team gates
+3. [Getting started](#3-getting-started) - prerequisites, team setup (once), member setup, first session, Obsidian vault
 4. [Daily use](#4-daily-use)
-5. [The Insight dashboard](#5-the-insight-dashboard) - start it, read it, alarms, settings
+5. [The Insight dashboard](#5-the-insight-dashboard) - start it, read it, alarms, settings, memory graph
 6. [Writing memory by hand](#6-writing-memory-by-hand)
 7. [Security model](#7-security-model)
 8. [Troubleshooting](#8-troubleshooting)
@@ -48,9 +75,11 @@ All three are AI-generated summaries, so a few labels are approximate. Where the
 | **Librarian** | A subagent that reads the memory in its own context and hands the session a 2 KB brief | `.claude/agents/memory-librarian.md` |
 | **`/wrap`** | The end-of-session procedure that writes what was learned back to memory | `.claude/skills/wrap/` |
 | **`team-lead`** | How to run several agents in parallel without them trampling each other | `.claude/skills/team-lead/` |
-| **Role agents** | `reviewer`, `verifier`, `adversary`, each with a shared role memory | `.claude/agents/`, `.claude/agent-memory/` |
+| **Role agents** | `builder`, `reviewer`, `verifier`, `adversary`, each with a shared role memory | `.claude/agents/`, `.claude/agent-memory/` |
 | **Guard hooks** | Stop the agent discarding uncommitted work, inventing timestamps, or spawning agents carelessly | `.claude/hooks/` |
-| **Insight** | A local dashboard of what Claude Code is doing: tokens, cost, tools, the agent team, lessons | `insight/` |
+| **Team gates** | Make parallel work get named teammates, refuse an idle teammate that still owns a task, wake the lead when one goes quiet | `.claude/hooks/team-*.py` |
+| **Insight** | A local dashboard of what Claude Code is doing: tokens, cost, tools, the agent team, lessons, the memory graph | `insight/` |
+| **Obsidian vault** | An optional locked-down Obsidian vault, outside the repo, for reading the memory as a graph | `tools/obsidian_vault.py` |
 
 **Requirements:** Linux, Python 3.10+, git, bash, Claude Code, and Node 18+ for Insight only. **Nothing to install
 beyond that:** every tool uses the standard library only, there are no npm or pip dependencies, no vendored binaries,
@@ -173,8 +202,8 @@ flowchart LR
   MERGE --> PULL["Member B: git pull"]
   PULL --> T0["B's next SessionStart:<br/>the trigger is in tier 0,<br/>the memory is in the index"]
   T0 --> B1["B's agent asks the question<br/>before repeating the trap"]
-  MERGE --> GEN["tools/agent_gen.py --all<br/>if tagged review / verification / red-team"]
-  GEN --> ROLE["reviewer / verifier / adversary<br/>now carry the lesson"]
+  MERGE --> GEN["tools/agent_gen.py --all<br/>if tagged build / review / verification / red-team"]
+  GEN --> ROLE["builder / reviewer / verifier / adversary<br/>now carry the lesson"]
 ```
 
 *In words:* a lesson is stored with the **question** that should fire before the mistake. Once merged, that question
@@ -219,7 +248,7 @@ flowchart TD
   GUARD -->|"allowed"| VF["verifier<br/>runs the real thing"]
   GUARD -->|"missing / wrong"| NO["blocked with the policy table"]
   CORE["agents-src/CORE-AGENTS.md"] -.->|"SubagentStart"| B1 & B2 & RV & VF
-  RMEM[".claude/agent-memory/role/MEMORY.md<br/>shared role memory"] -.-> RV & VF
+  RMEM[".claude/agent-memory/role/MEMORY.md<br/>shared role memory"] -.-> B1 & B2 & RV & VF
   B1 & B2 & RV & VF -->|"SendMessage + TaskUpdate"| LEAD
 ```
 
@@ -244,6 +273,60 @@ makes an outbound call. Loopback is not a boundary on a shared Linux host (any l
 every `/api/*` request also needs a random per-launch token. The server prints a URL ending in `?token=...` at start;
 opening it stores the token in an HttpOnly cookie and redirects, scripts can send `Authorization: Bearer <token>`. The
 token is never written to a file, and a restart makes a new one.
+
+### 2.8 Team gates
+
+*New in v1.1.* A team lead tends to build multi-part work alone, a teammate can finish and sit idle with no report,
+and nothing wakes a lead whose turn has ended. Three hooks turn those habits into mechanisms. They apply to the lead
+session only (teammates and subagents are never nagged), keep their state under `.claude/state/`, fail open, and log
+their own errors there.
+
+| Hook | When it runs | What it does |
+|---|---|---|
+| `team-gate.py` | after tool calls, and at Stop | After 20 lead tool calls with no **named, non-helper teammate** it adds a reminder to the lead's context, then again every 10 calls; at 40 calls it blocks the end of the turn once. Spawning a named teammate satisfies it. Helpers that do not count: `memory-librarian`, `Explore`, `Plan`, `claude-code-guide`, `statusline-setup`, `fork`. |
+| `team-stall-gate.py` | when a teammate goes idle, and at Stop | A teammate that still owns an `in_progress` task is refused idle ("check your blocker directly now") up to 3 times; after that the stall is recorded and the lead's turn end is blocked once with the list. At Stop it also blocks while teammates were active in the last 5 minutes and no watchdog is running. |
+| `team-watchdog.py` | started by the lead, in the background | Exits with one verdict, which re-invokes the lead: `STALE` (a teammate quiet for `--minutes`, with who and its last action), `OVERSIZE` (a teammate's context over `--ctx-limit`; once per teammate), `QUIET` (nothing to watch), `MAX` (`--max` minutes passed) or `ERROR` (the watchdog itself failed - it is logged and you check the teammates yourself). Teammates whose tasks are all completed, and teammates stopped with `TaskStop`, are skipped. |
+
+**Starting the watchdog.** The lead runs it as a background command whenever it waits on teammates; the stall gate
+prints the exact line to use when it blocks a turn end:
+
+```bash
+python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/team-watchdog.py" <session_id> --minutes 5 --max 30
+```
+
+It is allowlisted in `.claude/settings.json`, so it runs without a prompt. `python3 .claude/hooks/team-watchdog.py --help`
+lists `--ctx-limit`, `--also NAME=DIR` (count a folder changing as a sign of life for a teammate inside one long
+command) and `--transcript`. Because both gates key on the tasks a teammate **owns**, give each teammate one task.
+
+**Waiving.** When the work really is serial, the lead says so once and the gate stays quiet:
+
+```bash
+python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/team-gate.py" waive <session_id> "<why the work is serial>"
+```
+
+The reminder prints this line with the session id filled in. Every waiver is appended to `.claude/state/waivers.log`.
+A waiver **expires** once the lead writes three distinct project files (files outside the repo and files under
+`memory/`, `.claude/state/` and `.claude/agent-memory/` do not count), because the work has become a build. Spawning a
+named teammate replaces a waiver. `python3 .claude/hooks/team-gate.py status <session_id>` and
+`python3 .claude/hooks/team-stall-gate.py status <session_id>` show where a session stands.
+
+**Where state lives.** `.claude/state/team-<session>.json`, `stall-<session>-<teammate>.json`,
+`watchdog-<session>.json` (the heartbeat while the watchdog runs) and `waivers.log`. All gitignored, per clone.
+
+**Switching a gate off.** Delete its entries from `.claude/settings.json` (a team that does not want a gate should
+remove it in a reviewed PR, since the file is shared): `team-gate.py` is wired under `PostToolUse` (`mark` and `nag`)
+and `Stop`; `team-stall-gate.py` under `PostToolUse` with matcher `TaskStop` (`stopped`), `Stop` (`stop`) and
+`TeammateIdle` (`idle`). If you remove only the Stop entry of the stall gate, nothing forces a watchdog any more. The
+`tests/test_wiring.py` suite checks the wiring, so update it with the same PR.
+
+### 2.9 What changed in the guards
+
+`git-guard.py` now counts the size of a commit from the **parsed** commit (a word in the message cannot make it count
+the whole tree, and a pathspec commit counts only its paths), and a commit of 150 or more changed lines is blocked
+when no `reviewer`, `verifier` or `adversary` was dispatched since the last successful commit; add
+`# no-review-ok: <reason>` to override (it is logged). `heredoc-guard.py` also blocks `python -` with nothing on
+stdin and a Python heredoc that writes a file (add `# heredoc-write-ok` to allow one), and appends
+"heredoc block #N in the last 7 days" to its message from a rotated block log.
 
 ---
 
@@ -376,6 +459,47 @@ no persona and no memory, and section 8 shows how to tell.
 5. Push the branch and open the PR. A teammate reviews it - **read what the agent wrote before you push**: merged
    memory is loaded into everyone's sessions.
 
+### 3.5 Reading the memory in Obsidian (optional)
+
+*New in v1.1.* The memory is plain markdown with `[[links]]`, so [Obsidian](https://obsidian.md) can browse it as a
+graph. `tools/obsidian_vault.py` prepares a vault for that; it **never installs or launches Obsidian and never touches
+the network** - install Obsidian yourself first.
+
+```bash
+python3 tools/obsidian_vault.py setup      # create the vault, locked down, before Obsidian ever opens it
+python3 tools/obsidian_vault.py check      # re-read the lockdown; exit 1 if anything drifted
+python3 tools/obsidian_vault.py lock-app   # turn automatic updates off in Obsidian's own app config
+python3 tools/obsidian_vault.py path       # print the vault directory
+```
+
+Then open the vault in Obsidian (`setup` prints the `obsidian://open?vault=...` link).
+
+- **The vault is outside the repo** (default `$XDG_DATA_HOME/agent-team-harness/vault`, i.e.
+  `~/.local/share/agent-team-harness/vault`; `%LOCALAPPDATA%` on Windows; `--vault DIR` or `$AGENT_VAULT_DIR` to
+  choose another). A vault inside the repo is refused, because `.obsidian/` holds per-user workspace state that must
+  never be committed (`.obsidian/` is also in `.gitignore`). `setup` refuses to overwrite an existing vault (exit 2).
+- **What `setup` writes** before first launch: Sync, Publish and the web viewer core plugins off, no community
+  plugins, links never rewritten on rename, delete asks first. `memory/` and `agent/` appear in the vault as links
+  (symlinks; directory junctions on Windows) to your clone.
+- **Automatic updates are an app-level setting**, kept in Obsidian's own `obsidian.json`, not in the vault. `setup`
+  creates that file with updates off only if it does not exist yet; an existing one is yours and is never touched -
+  `setup` warns, and `lock-app` changes only that one key (and keeps a `.bak`). `check` fails (exit 1) while updates
+  are on. Use `--app-dir DIR` (or `$AGENT_OBSIDIAN_APP_DIR`) to point the tool at another config folder.
+- **The links are LIVE. Treat the vault as read-only.** It points at your working tree, not at a copy: an edit,
+  rename or delete in Obsidian is an edit to the team memory (`tools/memory_lint.py` catches a broken file, but a
+  rename leaves `name:` wrong). Change memory through `/wrap` and a PR as usual.
+- **Never enable Sync, Publish or community plugins on this vault**, and keep automatic updates off. `check` exits 1
+  if a lockdown value drifts, a community plugin is enabled, or a theme or CSS snippet appears (CSS can load remote
+  content). It cannot see inside notes: a note's body can embed a remote image that Obsidian
+  fetches when the note is shown, so review memory diffs as before.
+- **Does it phone home?** Measure it on your Obsidian version instead of trusting the settings; the re-runnable
+  procedure (logging proxy plus a positive control with updates on) is in
+  [insight/README.md](insight/README.md#does-it-phone-home-a-check-you-can-re-run). Measured once on Obsidian 1.15.0:
+  0 connections with updates off, 2 (the update endpoints) with updates on - which is why `check` insists on it.
+
+Exit codes of `obsidian_vault.py`: 0 ok, 1 drift (`check`) or setup failed, 2 refused (existing vault, vault inside
+the repo, no vault to check, an app config that is not valid JSON), 64 usage error.
+
 ---
 
 ## 4. Daily use
@@ -387,7 +511,7 @@ no persona and no memory, and section 8 shows how to tell.
 | "review this" | spawns the `reviewer` role (spec + diff, ranked findings) |
 | "verify it" / "does it actually work?" | spawns the `verifier` role (runs it, positive and negative controls) |
 | "red team this" / "is this conclusion right?" | spawns the `adversary` role |
-| "do it in parallel" / "staff it" | the `team-lead` skill: named teammates with owned files + a reviewer |
+| "do it in parallel" / "staff it" | the `team-lead` skill: named `builder` teammates with owned files + a reviewer |
 | `/wrap` | log, memories, lessons, index, health check, memory-only branch |
 | `python3 tools/memory_tools.py search "<terms>"` | search the team's memory yourself |
 
@@ -456,6 +580,7 @@ most recently, whichever repo that session ran in, and lists recent sessions alo
 | **Files & folders** | the folders and files touched most | an edit to a file nobody expected |
 | **Faults** | the latest failed tool calls with their error text | read before you re-run anything |
 | **Recent sessions** (footer) | the last five sessions by project and time; `▸` marks the one shown | |
+| **Memory graph** | every memory and lesson as a node, with their links and shared tags (5.7) | find an isolated memory, or a cluster nobody links to |
 
 Insight never reads message bodies between agents, spawn prompts or task descriptions: the team views show shape
 and status, not content.
@@ -516,6 +641,22 @@ which is assumed to be a live dashboard, unless `PROBE_LIVE=1`).
 | "loader not found" on the Tier 0 card | `--repo` does not point at an agent repo | drop `--repo`, or point it at the repo root |
 | Tier 0 shows fewer parts than configured | the persona did not fully load | section 8, first row |
 
+### 5.7 The memory graph
+
+*New in v1.1.* A panel drawing the team memory: each file under `memory/topics` and `memory/lessons` is a node
+(lessons gold, topics green, superseded red), with three kinds of edge - a `[[slug]]` link (solid), `superseded_by`
+(dashed red) and shared tags (faint). Hover a node for its type, tags and description; click a lesson to read it.
+The panel's stamp counts what was **not** drawn: memories over the 400-node cap, files skipped for an unsafe name, and
+`[[links]]` that point at nothing.
+
+It is built from `memory/` when the page asks (`GET /api/memgraph`, cached 30 s), so there is no generated file to
+commit, and it is a 2D canvas with no vendored code. Memory arrives through other members' PRs, so it is treated as
+untrusted: a file with an unsafe name or a symlink is counted and never opened, a node's id is its file name (never
+its `name:` value), and every string is rendered as text, never as HTML. The endpoint has the same token, Host
+allow-list and cross-site refusal as every other `/api/*` route, and nothing in it writes. An **OBSIDIAN** button
+appears only when a vault made by `tools/obsidian_vault.py` (3.5) points at this repo's `memory/`; it is a plain
+`obsidian://` link and Insight never launches anything. Details: `insight/README.md`.
+
 ---
 
 ## 6. Writing memory by hand
@@ -566,7 +707,7 @@ Chain build steps with `&&` and print each exit code; read the log's timestamp b
 |---|---|---|
 | `type` | rule, decision, project, reference, lesson, runbook | what kind of knowledge |
 | `status` | active, superseded, ephemeral | superseded = do not act on it (needs `superseded_by`); ephemeral = flagged stale after 14 days |
-| `tags` | lowercase-kebab | `review`, `verification`, `red-team` also feed those role agents |
+| `tags` | lowercase-kebab | `build`, `review`, `verification`, `red-team` also feed the builder, reviewer, verifier and adversary role agents |
 | `trigger` | a question ending in `?` | lessons only |
 | `tier0` | true / false | lessons only; false keeps it searchable but out of tier 0 |
 
@@ -604,6 +745,7 @@ flowchart TB
 | Hook state or transcripts leak | `.claude/state/` is gitignored; hooks log shapes and file paths, never prompt text; transcripts never leave `~/.claude` |
 | A web page, or another local process or user, reads your transcripts through Insight | Per-launch random token on every `/api/*` request (HttpOnly SameSite=Strict cookie or Bearer header), Host allow-list, cross-site refusal, traversal guard, CSP + `frame-ancestors 'none'`, loopback bind, no outbound calls |
 | No dependencies to compromise | stdlib Python, Node built-ins, no package manager, no network calls |
+| An Obsidian vault phones home, or edits team memory unnoticed | the vault is outside the repo with automatic updates, Sync, Publish and community plugins off; `obsidian_vault.py check` detects drift; the links are live, so it is read-only by convention (3.5) |
 
 Report a suspected vulnerability to the repo owners privately rather than in a public issue.
 
@@ -619,6 +761,11 @@ Report a suspected vulnerability to the repo owners privately rather than in a p
 | "Member in this session: unknown" | no `git config user.name` and no `AGENT_MEMBER` | set one of them |
 | The librarian gate nags every prompt | the librarian was never dispatched this session | let the agent dispatch it, or waive with the command it prints |
 | `git-guard` blocks a command | it would discard uncommitted work | copy the file aside before editing, restore from the copy; or add `# git-guard-ok` after checking |
+| `git-guard` blocks a commit of 150+ lines | no `reviewer`, `verifier` or `adversary` was dispatched since the last commit | spawn a reviewer; or add `# no-review-ok: <reason>` (logged) |
+| "TEAM GATE" reminders, or the turn end is blocked | 20+ lead tool calls and no named teammate | spawn named teammates (`team-lead` skill), or waive with the command the message prints (2.8) |
+| The turn end is blocked about a watchdog | teammates are active and no watchdog is running | start `team-watchdog.py` in the background (2.8) |
+| A teammate is told "check your blocker directly now" | it went idle while owning an `in_progress` task | it should check the blocker or mark the task completed; after 3 refusals the stall goes to the lead |
+| `obsidian_vault.py check` exits 1 | a lockdown value drifted, or updates are on in Obsidian's app config | read what it prints; `lock-app` for the updates key; restore the others with a fresh `setup --vault <new dir>` |
 | `memory_verify` check 2 WARN "stale" | `memory/_gen/` is older than memory/ | `python3 tools/memory_index.py` (every session also rebuilds it) |
 | `memory_verify` check 5 WARN "names were NOT checked" | no `tools/leak_patterns.txt` on this clone | create it (section 3.3 step 3) |
 | `memory_verify` check 4 FAIL "DRIFT" | a lesson changed, role agents not rebuilt | `python3 tools/agent_gen.py --all` |
@@ -638,7 +785,11 @@ Report a suspected vulnerability to the repo owners privately rather than in a p
   near-duplicates to merge.
 - **Role agent changes:** edit `agents-src/<role>.src.md`, then `python3 tools/agent_gen.py <role>`. Never edit the
   generated `.claude/agents/<role>.md`.
-- **Everything at once:** `python3 tests/run_all.py`.
+- **Everything at once:** `python3 tests/run_all.py` - since v1.1 this also runs the three team-gate self-tests,
+  `tests/test_team_gates.py` (including mutation cases that must fail when a guard is compiled out) and
+  `tests/test_obsidian.py`.
+- **If you use the Obsidian vault:** `python3 tools/obsidian_vault.py check` - exit 1 means a lockdown value drifted
+  (updates on, a community plugin enabled, a link replaced). Re-run it after upgrading Obsidian.
 
 ### Continuous integration
 
@@ -657,7 +808,7 @@ mean "Insight was never tested". Install Node 18+ in the image, or, if your team
 first line with these three and say so in the pipeline:
 
 ```bash
-python3 tests/run_all.py -k hooks --strict          # the four hook self-tests
+python3 tests/run_all.py -k hooks --strict          # the seven hook self-tests
 python3 tests/run_all.py -k memory_tools --strict   # needs a Linux filesystem: its POSIX cases SKIP on Windows
 python3 tests/run_all.py -k test_wiring --strict
 ```
@@ -679,12 +830,13 @@ memory/                the team's memory - tier 2 (PR review)
 agents-src/            role agent sources + CORE-AGENTS.md (the core every spawned agent receives)
 .claude/
   settings.json        hooks + env (committed)
-  hooks/               load-persona.sh, tier0-pack.py, gates, guards, logs
-  agents/              memory-librarian.md + generated roles
+  hooks/               load-persona.sh, tier0-pack.py, gates (incl. team-gate, team-stall-gate, team-watchdog), guards, logs
+  agents/              memory-librarian.md + generated roles (builder, reviewer, verifier, adversary)
   agent-memory/        shared memory per role
   skills/              wrap, team-lead
   state/               per-clone hook state (gitignored)
-tools/                 common, memory_index, memory_lint, memory_tools, memory_verify, agent_gen, init_agent, leak_scan
+tools/                 common, memory_index, memory_lint, memory_tools, memory_verify, agent_gen, init_agent, leak_scan,
+                       obsidian_vault
 insight/               local dashboard (node, loopback only)
 tests/                 run_all.py + suites + fixtures
 docs/                  ARCHITECTURE.md (how memory works), SPEC.md (the build contract),

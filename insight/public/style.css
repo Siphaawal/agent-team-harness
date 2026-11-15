@@ -219,6 +219,21 @@ body{
   background:radial-gradient(60% 55% at 50% 50%,rgba(57,255,20,.06),transparent 70%)}
 #p-graph h2{white-space:nowrap}
 #graphStamp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── MEMORY GRAPH (public/memgraph.js): one canvas, the hovered memory in the line below it ─────────── */
+#p-memgraph h2{white-space:nowrap}
+#mgStamp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mgobs{text-decoration:none;font-size:calc(9px*var(--fs));padding:1px 8px}
+.mgobs[hidden]{display:none}
+.mgraph{position:relative;flex:1;min-height:90px;overflow:hidden;
+  background:radial-gradient(60% 55% at 50% 50%,rgba(224,178,58,.05),transparent 70%)}
+.mgfx{position:absolute;inset:0;width:100%;height:100%;display:block}
+.mgfx.hot{cursor:pointer}
+.mginfo{flex:none;min-height:2.6em;max-height:4.4em;overflow:hidden;font-size:calc(10px*var(--fs));color:var(--ink-dim);
+  border-top:1px solid var(--line2);padding-top:4px;margin-top:4px}
+.mginfo b{color:var(--cyan-hot);font-weight:600}
+.mginfo .mgtags{color:var(--amber)}
+.mginfo .mgdesc{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tgfx,.tgsvg{position:absolute;inset:0;width:100%;height:100%;display:block}
 .tgsvg{overflow:visible}
 .tgguides ellipse{fill:none;stroke:var(--line2);stroke-width:1;stroke-dasharray:2 6;opacity:.7}

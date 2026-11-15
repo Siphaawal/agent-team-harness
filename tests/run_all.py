@@ -16,11 +16,15 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable or "python3"
+TIMEOUT_S = 900          # per test; the mutation suite takes several minutes on a slow or busy machine
 HOOK_SELFTESTS = [
     [".claude/hooks/git-guard.py", "test"],
     [".claude/hooks/heredoc-guard.py", "test"],
     [".claude/hooks/stamp-guard.py", "test"],
     [".claude/hooks/session-log.py", "test"],
+    [".claude/hooks/team-gate.py", "test"],
+    [".claude/hooks/team-stall-gate.py", "test"],
+    [".claude/hooks/team-watchdog.py", "test"],
 ]
 
 
@@ -39,11 +43,11 @@ def main(argv):
         name = " ".join(cmd[2:])
         t0 = time.time()
         try:
-            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=TIMEOUT_S, stdin=subprocess.DEVNULL,
                                encoding="utf-8", errors="replace")
             rc, out = r.returncode, r.stdout + r.stderr
         except subprocess.TimeoutExpired:
-            rc, out = 124, "TIMEOUT after 300 s"
+            rc, out = 124, "TIMEOUT after %d s" % TIMEOUT_S
         ok = rc == 0
         failed += not ok
         # a skipped test is not a passed one: say SKIP and why, or a missing runtime reads as green

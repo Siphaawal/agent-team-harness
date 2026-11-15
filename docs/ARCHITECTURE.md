@@ -47,8 +47,9 @@ real work:
   flagged stale 14 days after `verified`. **Expire by truth, not by date.**
 - **`type: lesson` + `trigger:`** - a lesson is stored with the QUESTION to ask before acting. Knowing a fact is not
   the same as having a question that fires at the right moment; only the triggers are in tier 0.
-- **`tags`** - lessons tagged `review`, `verification` or `red-team` are compiled into those role agents by
-  `tools/agent_gen.py`.
+- **`tags`** - lessons tagged `build`, `review`, `verification` or `red-team` are compiled into the builder,
+  reviewer, verifier and adversary role agents by `tools/agent_gen.py`. The repo ships no lessons, so a new team's
+  role agents carry an empty lesson list until /wrap records the first tagged lesson.
 
 ## Why it is shaped this way for a team
 
@@ -75,11 +76,53 @@ a memory-only branch for review.
 ## Agents
 
 - `agents-src/CORE-AGENTS.md` - the ~3 KB core every spawned agent receives (SubagentStart hook).
-- `agents-src/<role>.src.md` -> `.claude/agents/<role>.md` (generated) - reviewer, verifier, adversary.
+- `agents-src/<role>.src.md` -> `.claude/agents/<role>.md` (generated) - builder, reviewer, verifier, adversary.
+  Builders spawn as the `builder` role so the build contract and the `build` lessons reach every builder without the
+  lead pasting them into each brief.
 - `.claude/agent-memory/<role>/MEMORY.md` - each role's own memory, shared by the team (`memory: project`).
 - `agent-model-guard.py` - every spawn states its job class and an allowed model.
 - Agent teams run inside one member's lead session; there is no channel between members' sessions. Members coordinate
   through git.
+
+## Team gates: parallel work gets named, watched teammates
+
+Running a team fails in quiet ways: the lead does parallel work alone, a teammate finishes and sits idle with no
+report, and nothing wakes a lead whose turn has already ended. Three hooks turn those habits into mechanisms. All of
+them keep project-scoped state under `.claude/state/`, fail open, and log their own errors.
+
+| Hook | Event | What it does |
+|---|---|---|
+| `team-gate.py` | tool use, Stop | nags after a run of lead tool calls with no named (non-helper) teammate; blocks the Stop once at a higher count; an audited `waive` silences it, and the waiver EXPIRES once the lead writes three distinct project files (scratch, memory and state do not count) - a spawn replaces a waiver |
+| `team-stall-gate.py` | TeammateIdle, Stop | refuses idle (exit 2, "check your blocker directly now") to a teammate that still owns an in_progress task, up to 3 times, then records the stall and blocks the lead's Stop once with the list; in Stop mode it also blocks while teammates are active and no live watchdog is running |
+| `team-watchdog.py` | started by the lead, in the background | exits `STALE` (a teammate quiet for `--minutes`, naming who and its last action), `QUIET`, `MAX`, `OVERSIZE` (a teammate's context over the limit, once per teammate) or `ERROR` (the watchdog itself failed; logged, exit 0); skips teammates whose tasks are all completed and teammates that were stopped |
+
+The exit of the watchdog is what re-invokes a lead that would otherwise be idle, which is why the stall gate insists a
+watchdog is running before the lead may end a turn. Both gates key on the tasks a teammate OWNS, so the team-lead skill
+requires one task per teammate. The shipped guards were tightened in the same release: `git-guard.py` counts commit
+size from the parsed commit (a pathspec commit counts only its paths) and asks for a reviewer on a large commit, and
+`heredoc-guard.py` keeps a block log so a repeated habit is reported with its count.
+
+## The Obsidian vault and the memory graph
+
+Memory is plain markdown with `[[links]]`, so it can be read as a graph.
+
+- **`tools/obsidian_vault.py`** sets up an Obsidian vault OUTSIDE the repo, holding links (symlinks, or directory
+  junctions on Windows) to `memory/` and `agent/`, with a locked-down `.obsidian/` written before the first launch:
+  automatic updates off, Sync, Publish and the web viewer off, community plugins off, no themes or CSS snippets
+  (CSS can load remote content; `check` flags any that appear). A note can still embed a remote image, which Obsidian
+  fetches when the note is opened. `setup`
+  refuses to overwrite an existing vault, `check` exits 1 if any lockdown value has drifted, `path` prints the vault
+  directory, `lock-app` turns automatic updates off in Obsidian's own app config. It never installs Obsidian and never touches the network. The vault sits outside the repo because
+  `.obsidian/` holds per-user workspace state that must not be committed (it is also in `.gitignore`).
+- **Honest limit:** the links point at the LIVE working tree, not a copy. An edit or rename made inside Obsidian is an
+  edit to team memory (`memory_lint.py` catches a broken file; a rename desyncs `name:`). Treat the vault as a reader.
+- **Why updates are switched off:** one measurement on Obsidian 1.15.0 saw 0 outbound connections with automatic
+  updates off and 2 (the update endpoints) with them on. That is a data point, not a guarantee - re-measure with a
+  logging proxy and a positive control (updates on) rather than trusting it.
+- **Insight memory graph** is a panel in the Insight dashboard: nodes are memories and lessons, edges are `[[links]]`
+  and shared tags, built from `memory/` by the server at request time (nothing generated is committed). It keeps every
+  Insight rule - token on `/api/*`, Host allow-list, CSP, no outbound calls, no write endpoints - and shows an OBSIDIAN
+  button (`obsidian://open?vault=<name>`) only when the vault exists.
 
 ## Failure modes and their defences
 
@@ -95,3 +138,5 @@ a memory-only branch for review.
 | A merge runs code on every machine | CODEOWNERS on `.claude/`, `tools/`, `agent/`, `insight/` |
 | Uncommitted work discarded by an agent | `git-guard.py` |
 | A gate dies quietly | every hook logs its own errors to `.claude/state/` and fails open |
+| Parallel work done alone, or an idle teammate nobody sees | `team-gate.py`, `team-stall-gate.py`, `team-watchdog.py` |
+| Obsidian phones home or edits team memory unnoticed | `obsidian_vault.py check` (lockdown drift); the vault is documented as read-only by convention |

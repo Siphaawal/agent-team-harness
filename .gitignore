@@ -26,6 +26,10 @@ tools/leak_patterns.txt
 insight/*.log
 insight/*.err
 
+# Obsidian per-user state. tools/obsidian_vault.py puts the vault OUTSIDE the repo; this is the belt in case someone
+# opens the repo itself as a vault.
+.obsidian/
+
 __pycache__/
 *.pyc
 node_modules/

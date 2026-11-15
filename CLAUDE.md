@@ -26,6 +26,15 @@ the SessionStart hooks (tier 0).
 | `agent-model-guard.py` | spawning an agent without `name`, explicit `model`, and a `MODEL-BY-JOB:` line |
 | `subagent-core.py` | injects `agents-src/CORE-AGENTS.md` into every spawned agent |
 | `session-log.py` | appends an auto skeleton to `memory/log/YYYY-MM/YYYY-MM-DD.<member>.md` at session end |
+| `team-gate.py` | nags after 20 lead tool calls with no named teammate, blocks the Stop once at 40 - spawn named teammates, or `waive` with a reason (expires after 3 project files written) |
+| `team-stall-gate.py` | refuses idle to a teammate that owns an in_progress task (check your blocker directly now); blocks the lead's Stop while teammates are active and no watchdog runs |
+| `team-watchdog.py` | not a hook the harness fires: the lead starts it in the background whenever it waits on teammates (`team-watchdog.py <session_id>`); its exit wakes the lead |
+
+A teammate: own ONE task, and mark it completed before you go idle. A lead: one task per teammate, and run the
+watchdog while you wait. When a gate blocks, do what its message says; do not edit settings.json to get past it.
+
+The Obsidian vault (`tools/obsidian_vault.py`, optional) is linked to the LIVE `memory/` and `agent/`: read it, never
+edit or rename in it, and never enable Sync, Publish or community plugins on it. Write memory through `/wrap`.
 
 ## Where things live
 

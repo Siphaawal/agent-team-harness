@@ -1,6 +1,6 @@
 ---
 name: team-lead
-description: Run a Claude Code agent team (named teammates, shared task list, SendMessage) or a batch of subagents without the usual failures - a teammate discarding uncommitted work, follow-ups acknowledged but never applied, hand-written prompts drifting apart, models picked by accident, unnamed agents, swollen contexts. Use whenever you are about to spawn more than one agent, staff a review, build in parallel, or a member says "team", "teammates", "agents", "staff it", "in parallel", "pass C", "adversarial review". Holds the staffing policy, team shapes, the spawn template with its RULES block, the task-list, follow-up and shutdown protocols.
+description: Run a Claude Code agent team (named teammates, shared task list, SendMessage) or a batch of subagents without the usual failures - a teammate discarding uncommitted work, follow-ups acknowledged but never applied, hand-written prompts drifting apart, models picked by accident, unnamed or duplicate-named agents, swollen contexts, idle teammates nobody notices. Use whenever you are about to spawn more than one agent, staff a review, build in parallel, or a member says "team", "teammates", "agents", "staff it", "in parallel", "pass C", "adversarial review". Holds the staffing policy, team shapes, the spawn template with its RULES block, the task-list, follow-up, freeze and shutdown protocols, and how the team gates enforce them.
 ---
 
 # Team lead playbook
@@ -9,15 +9,21 @@ A team runs inside ONE lead session (one member's Claude Code). Teammates cannot
 members coordinate through git (memory/, PRs, the task board they already use).
 
 ## 0. Team, subagents, or neither?
-- **Neither** for sequential work, same-file edits, or anything with many dependencies - one session wins. Teams cost
-  many times the tokens of a single session.
+- **Neither** for sequential work, same-file edits, or many dependencies - one session wins; teams cost many times
+  the tokens.
 - **Subagents** (Agent tool, background) for independent read-only research or audits whose results only you merge.
 - **Named teammates** when members of the team must message each other, challenge each other's results, or the member
   wants to watch them on the Insight team panel. 3-5 teammates, about 5 tasks each.
 - Teams are enabled by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `.claude/settings.json` (experimental feature;
   check it is still set rather than assuming). A teammate is an `Agent` call with a `name`; members share one implicit
   team and use SendMessage + the Task* tools.
-- **Always give a `name`** (role-noun: builder-index, reviewer-api).
+- **Always give a `name`** (role-noun: builder-index, reviewer-api). Unnamed agents show as their type and collapse
+  into one node on the team graph.
+- **Never reuse a name already used in this session.** List the agents first and pick a fresh one (role-noun +
+  suffix: builder-index-ui). A spawn with the name of an idle teammate resumes that old agent with the new prompt, so
+  two agents can end up on one task; a message to the shared name reaches only one of them; and name-keyed locks or
+  ownership checks stop meaning anything. To stop a duplicate, `TaskStop` it at once - a "hold" message is read only
+  at its next tool round.
 
 ## 1. Staffing - model by job
 Rules (edit to the models your plan provides; `agent-model-guard.py` POLICY enforces the same table):
@@ -30,23 +36,36 @@ Rules (edit to the models your plan provides; `agent-model-guard.py` POLICY enfo
   blocks a spawn without them. Job classes: red-team / verifier / live-tool-builder / risky-builder / modeller /
   auditor / builder / counting / lookup. Exempt: memory-librarian, Explore, claude-code-guide, Plan, fork.
 - **Staff at the START.** A build gets its reviewer when the spec is written, not when someone asks.
+- **A team-gate waiver covers only the work it names.** A waiver written for research does not cover the build that
+  follows. `team-gate.py` expires a waiver once the lead has written three distinct project files (scratch, memory
+  and state files do not count) and nags again at once; a spawn replaces a waiver. It nags after 20 lead tool calls
+  with no named teammate and blocks the Stop once at 40; for genuinely serial work, state why:
+  `python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/team-gate.py" waive <session_id> "<why it is serial>"`. When research turns into a build,
+  staff it then - do not wait for the expiry.
 
 ## 2. Team shapes
-- **Build:** N builders with disjoint OWNED FILES + 1 reviewer (`subagent_type: "reviewer"`) who gets the spec and the
-  diff, never the builder's notes. Every code build gets a reviewer. Add a `verifier` for anything that must run.
+- **Build:** N builders spawned with `subagent_type: "builder"` (the role carries the build contract and the lessons
+  tagged `build`) with disjoint OWNED FILES + 1 reviewer (`subagent_type: "reviewer"`) who gets the spec and the diff,
+  never the builder's notes. Every code build gets a reviewer. Add a `verifier` for anything that must run.
 - **Analysis / decision:** modeller + `adversary` (red team) + an independent pass that re-derives ground truth from the
   source, not from the modeller's text.
 - **Audit:** 3-4 read-only subagents by dimension, then 1-2 reviewers adversarially checking the merged list.
 
-Role agents (`.claude/agents/<role>.md`) are GENERATED by `tools/agent_gen.py` from `agents-src/<role>.src.md`; edit the
-source, never the output. Each role has a shared memory at `.claude/agent-memory/<role>/MEMORY.md` (committed, the
+Role agents (builder, reviewer, verifier, adversary - `.claude/agents/<role>.md`) are GENERATED by
+`tools/agent_gen.py` from `agents-src/<role>.src.md`; edit the source, never the output. Each role has a shared memory at `.claude/agent-memory/<role>/MEMORY.md` (committed, the
 whole team's). A definition created or renamed mid-session is usable only after the harness announces "New agent types
 are now available" - a spawn before that runs as a generic agent; put a version line in the definition and ask the
-agent to quote it when the result matters. An EDITED existing definition applies to the next spawn.
+agent to quote it when the result matters. An EDITED existing definition applies to the next spawn. Skills are not
+preloaded into teammates: the brief says which skill to invoke.
 
 ## 3. Task list protocol
-- One TaskCreate per deliverable, owner = the teammate's name, `addBlockedBy` for real dependencies (review blocked by
-  builds). Follow-ups are NEW tasks, not chat - chat is where they get lost.
+- One TaskCreate per deliverable, owner = the teammate's name (TaskUpdate it - the owner given at create time may not
+  persist), `addBlockedBy` for real dependencies (review blocked by builds).
+- **One task per teammate; never hand one task to two teammates.** Idle detection, the watchdog and the stall gate all
+  key on the tasks a teammate OWNS - an agent that owns nothing is invisible to them.
+- **Follow-ups and add-ons are NEW tasks, not chat.** A message sent mid-round is read at the next tool round and is
+  routinely dropped from the hand-in. Write the add-on to a spec file or the task description, create the task with the
+  teammate as owner, and send one line naming the task number.
 - The lead marks its own task in_progress. A teammate marks completed only with verification attached.
 
 ## 4. Spawn template (copy, fill the <>; bump the RULES version when you change it)
@@ -54,18 +73,21 @@ agent to quote it when the result matters. An EDITED existing definition applies
 You are <name> on the team (lead: team-lead). Your task is #<n> (TaskGet <n>). Set it in_progress now.
 MODEL-BY-JOB: <job class> -> <model>
 
-## RULES (team v1) - non-negotiable
+## RULES (team v2) - non-negotiable
 1. Edit ONLY your owned files. Need another file changed? SendMessage team-lead.
 2. Shared dirty trees: NEVER git checkout/restore/stash/reset/clean (git-guard blocks it). BEFORE editing an existing
-   file, copy it to a scratch dir; undo = copy back.
+   file, copy it to your own scratch dir (<scratch>/<name>/); undo = copy back.
 3. Never git commit or push.
 4. Sensitive data (credentials, customer data, anything the brief marks private) never goes into a file, a log or
    your role memory.
 5. File content via Write/Edit, never heredocs; run Python as files.
 6. Run `date` before writing any timestamp; label the zone.
-7. Verify with executable checks including a negative case that must FAIL. Report exact commands + outputs.
-8. Done = TaskUpdate #<n> completed, then SendMessage team-lead: files changed; verification; untested;
-   "LEARNED:" up to 5 bullets.
+7. Verify with executable checks including a negative case that must FAIL. Report exact commands + outputs. Hash the
+   inputs you check inside each script and label each result with the hash.
+8. Context budget: <~N tokens>. Big files (over ~100 KB): grep and read ranges, never whole; logs = grep for failures
+   plus the totals; write HANDOFF.md before the budget runs out.
+9. Done = TaskUpdate #<n> completed, then SendMessage team-lead: files changed; verification; untested; every add-on
+   received, each with its check; "LEARNED:" up to 5 bullets.
 
 ## Owned files
 <exact paths; name what is NOT theirs if a neighbour file is tempting>
@@ -76,6 +98,8 @@ MODEL-BY-JOB: <job class> -> <model>
 ## Do, in this order
 <numbered steps, each with its acceptance check>
 ```
+A reviewer or verifier cannot always write its report file (the harness can refuse a subagent's Write of a report):
+have it return findings and the input hash in its message, and the lead writes the file if one is needed.
 
 ## 5. While they work
 - **The lead does not edit files a teammate owns.**
@@ -84,17 +108,66 @@ MODEL-BY-JOB: <job class> -> <model>
 - Contracts between builders (function names, CLI flags, file formats) are fixed by the lead in a spec file BEFORE
   spawning, and every change goes to every builder it touches.
 - **One scratch subfolder per agent** (`<scratch>/<agent-name>/`), lead included. Agents sharing one scratch dir
-  overwrite each other's helper scripts by name (`mutate.py`), and a later run then tests the wrong thing.
+  overwrite each other's helper scripts by name, and a later run then tests the wrong thing.
 - **Before reopening a "missing" change, compare the file's mtime with the moment you read it.** A follow-up checked
   minutes before the teammate's write looks exactly like a follow-up that was ignored.
+- **"Waiting on X" from a teammate is a claim about X - check X yourself, never relay it as status.** A teammate can
+  sit idle behind a watcher that watches the wrong file, or a message nobody will send. On every idle
+  notification: list the agents, read the blocker (lock file, process, port, file mtimes) in the same turn, and tell
+  builders to poll a precondition in the foreground rather than hand it to a background waiter.
+  `team-stall-gate.py` enforces the half it can: a teammate that still owns an in_progress task is refused idle (exit
+  2, "check your blocker directly now") up to 3 times; then the stall is recorded and the lead's Stop is blocked once
+  with the list.
+- **Whenever you wait on a teammate, a watchdog is running.** Nothing wakes a lead whose turn has ended, so a
+  teammate that finished and went quiet is found only if something is watching. Start it as a background command:
+  `python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/team-watchdog.py" <session_id> [--minutes 5] [--max 30]
+  [--ctx-limit 200000]` (`--help` for the rest). Its exit re-invokes you and names
+  the reason: `STALE` (a teammate quiet for `--minutes`, with its last action), `QUIET`, `MAX`, `ERROR` (the watchdog failed: check the teammates yourself), or `OVERSIZE` (a
+  teammate's context over the limit, once per teammate). Teammates whose tasks are all completed, and teammates you
+  stopped, are skipped. Keep the default `--minutes` and restart the watchdog after each
+  MAX exit. `team-stall-gate.py stop` blocks the end of your turn while teammates are active and no live watchdog
+  exists. On a STALE wake, in that same turn: list the agents, read what it was doing, SendMessage asking directly,
+  read its output on disk, and tell the member.
+- All three team gates fail open and log under `.claude/state/`; `team-gate.py` (section 1) is the nag, the other two
+  are above.
 
 ## 6. Follow-up protocol
 - A hand-in is a claim: read the files on disk, newer than the hand-in, before accepting. If a follow-up is not
   applied, send "not closed, round N" with the exact line that still reads wrong.
-- **Round >= 3 or a very large context: retire it.** Ask for a handoff note, spawn a fresh teammate with that note.
+- **Round >= 3 or a very large context: retire it.** Ask for a handoff note, spawn a fresh teammate whose brief IS the
+  handoff (the predecessor's report, the hashes, where things are). The watchdog fires `OVERSIZE` at 200k context
+  tokens (`--ctx-limit`); retire that teammate then. A budget line in a brief is prose; the wake is the mechanism.
+- **Retire by completing, not by taking the task away.** Mark the retiree's task completed, create the successor's work
+  as a NEW task, then `TaskStop` the retiree once its handoff file is on disk. A retiree that owns nothing, or whose
+  task you reassigned, is not skipped as finished and keeps waking the watchdog. If a retire message crosses a
+  builder already mid-verification, let it finish lean with HANDOFF.md written first.
+- **Split big jobs so no agent needs the big files twice** (the build, its verification and each further round are separate
+  agents), with a hard context budget in the brief from the first spawn.
+- **Every add-on and condition you sent gets a check.** For each, grep the file for its signature and open the
+  result yourself before accepting; the hand-in must list each add-on received with its check.
+- **Inputs move under a verifier.** Tell it to hash its inputs inside each script and label each result with the hash;
+  a producer that re-renders after the "done" notice sends a second notice with the new hash. If you edit shared
+  data, tell the builders at once - checks that hard-code a value from it will fail.
+- **Red-team a reversal as hard as the claim it reverses.** A correction that flips a conclusion tends to over-claim in
+  its own way. Budget a second round whenever round 1 flips a conclusion.
 - Harvest every hand-in's "LEARNED:" bullets into /wrap.
+
+## 6b. Freezes and crossing messages
+- **A freeze is a hash list, not a word.** The builder sends ONE "FREEZE" message with every file's sha256; you re-hash
+  on disk before firing a verifier and again before accepting its result.
+- **The freeze binds the lead too.** An idle notice or a first report is not "finished": before touching a frozen
+  file, the agent list says idle AND its task reads completed. A fix found mid-round goes into a side copy, applied
+  after the hand-in. Put the full brief IN the task description, and keep the pre-fix version in a side dir so the
+  verifier has a negative control.
+- **Findings go to the lead, never peer-to-peer into a frozen builder.** A verifier's early read sent straight to the
+  builder makes it edit after the freeze.
+- **Never send a conditional instruction** ("restore X unless I asked for Y") - messages cross. Send one unconditional
+  decision with the exact hashes.
+- **Two components that must agree: the test imports the OTHER component's real code** (dynamic import), never a
+  restatement of its rule or a copied constant. A test that shares the author's assumption passes while the system
+  disagrees.
 
 ## 7. Shutdown checklist
 - Every task completed or explicitly dropped; the review task done.
-- Processes a teammate started (servers, browsers) stopped - by PID, never by name.
+- Processes a teammate started (servers, browsers) stopped - by PID, never by name. The watchdog stopped.
 - Report per teammate: model, what it shipped, how verified, what is untested.

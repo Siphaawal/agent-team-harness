@@ -41,8 +41,8 @@ GEN_DIR = "_gen"
 LOG_DIR = "log"
 EPHEMERAL_DAYS = 14
 
-SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\Z")
 
 
 def utf8_stdout():
@@ -387,7 +387,7 @@ def atomic_write(path, text):
 # index forges a tier-0 section. So only slug-clean names are ever opened or printed, and a symlink is never followed
 # (memory/topics/x.md -> ~/.ssh/id_rsa would put the key in the index and in search output).
 
-FILE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+FILE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
 # C0 controls, DEL, and the characters str.splitlines() also breaks on (NEL, LINE/PARAGRAPH SEPARATOR)
 CONTROL = re.compile("[%s]" % re.escape("".join(chr(c) for c in list(range(0x20)) + [0x7f, 0x85, 0x2028, 0x2029])))
 

@@ -27,8 +27,17 @@ If the session produced nothing durable, say so and stop. An empty log beats an 
 - **Hazards:** list every trap hit this session (error-retry loops, rollbacks, wrong writes, corrected stamps). For
   each, run `python3 tools/memory_tools.py search "<the trap>"`. Recorded before = a **RE-HIT**: fix the record in
   this wrap (sharpen the trigger question, or - on a repeat re-hit - make it a hook). Not recorded = a new lesson.
+- **Recall:** were memories searched mid-session, or only at wrap? A session that re-hit a recorded hazard with zero
+  mid-session searches means recall is pull-only and the push (a trigger) is missing.
+- **Teammates:** copy every hand-in's `LEARNED:` bullets into the log and treat each like a hazard above.
+- **No-op sweep** (idea adapted from the `retro` skill in mattpocock/skills, MIT): take the always-loaded lines this session brushed against (tier 0, CLAUDE.md, the skills used) and
+  ask of each: did it change what I did, or would I have done the same without it? A line that only restates a
+  default is a NO-OP: name up to 3 in the report as candidates to cut or move to tier 1; never delete one during the
+  wrap unasked. A rule for a rare hazard that did not fire is insurance, not a no-op. A line that SHOULD have fired
+  and did not is a missing mechanism - treat it as a re-hit.
 - Write ONE line into the log: `Memory/skills: <n> recalled+used / <n> re-hit (fixed: ...) / <n> new; skills
   <invoked> of <needed>. Verdict: effective | improve: <the one mechanism change made>.`
+  A re-hit without a mechanism change in the same wrap is not allowed - that is the failure this step exists to stop.
 
 ## 3. Enrich the daily log
 
@@ -59,13 +68,18 @@ a near-duplicate, and grep only finds the words you already guessed.
 - **How-to-work lesson** (true beyond this one codebase task: a verification habit, a toolchain trap) ->
   `memory/lessons/<slug>.md`, `type: lesson`, with a `trigger:` - the QUESTION to ask before acting, ending in `?`.
   A lesson without a trigger does not fire; the trigger is what reaches every member's tier 0. Tag it for the roles it
-  serves (`review`, `verification`, `red-team`) so they receive it.
+  serves (`build`, `review`, `verification`, `red-team`) so they receive it.
 - **Refines an existing memory** -> edit it; set `verified:` to today.
 - **Contradicts an existing memory** -> set the old one `status: superseded` + `superseded_by: <new-slug>`, keep a
   one-line stub of why it reversed. Never silently delete: other members' sessions may cite it.
 - **Turned out wrong** -> delete it, and say so in the PR description.
 - **Time-sensitive** (handoff, open-issue list) -> `status: ephemeral` with `verified:` today; it is flagged stale
-  after 14 days.
+  after 14 days. Staleness counts from `verified:` (else `created:`), so a rewritten handoff without a fresh
+  `verified:` reads as stale.
+- **A handoff memory is pruned, never only prepended to.** Keep at most the three newest dated blocks plus its stable
+  sections (branches, open items with an owner, settled decisions); move older blocks to an archive file under
+  `memory/log/` with a one-line pointer left behind, and keep the `description:` to ONE paragraph - never chain
+  "earlier ..." onto it. A fresh session that must read a handoff whole should not pay for its history.
 
 Don't save what the repo already records (code structure, git history, CLAUDE.md). Never write secrets, credentials,
 customer data or anything a member marked private - memory is committed and every member reads it. A member's
@@ -99,7 +113,11 @@ python3 tools/memory_verify.py           # every check must PASS; fix what fails
 ```
 
 Tier 0 has a budget: `bash .claude/hooks/load-persona.sh check 8`. If a new lesson pushes it over, set `tier0: false`
-on a weaker lesson (it stays searchable) rather than adding a part.
+on a weaker lesson (it stays searchable) rather than adding a part. For a lesson that was RE-HIT after being recorded,
+prose has already failed once: make it a hook or a check, not a longer sentence.
+
+If the session ran a team, also read each role memory under `.claude/agent-memory/` that changed: promote anything
+true beyond that role into a lesson or a skill, and prune a role memory that is never cited.
 
 ## 6. Prepare the memory change for review
 

@@ -43,8 +43,14 @@ function toolPath() {
 
 function run(cmd, argv) {
   return new Promise((resolve) => {
-    const child = execFile(cmd, argv, { cwd: REPO, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => resolve({ err, stdout: String(stdout || ''), stderr: String(stderr || '') }));
+    let child;
+    try {
+      child = execFile(cmd, argv, { cwd: REPO, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+        (err, stdout, stderr) => resolve({ err, stdout: String(stdout || ''), stderr: String(stderr || '') }));
+    } catch (err) {     // spawn can throw synchronously (e.g. EINVAL for a .bat/.cmd on Windows): a failed run, not a crash
+      resolve({ err, stdout: '', stderr: '' });
+      return;
+    }
     if (child.stdin) child.stdin.end();          // stdin is never used: close it so the tool cannot wait on it
   });
 }
@@ -76,10 +82,12 @@ export async function fetchLessons(repo = REPO) {
 
 function refresh() {
   if (cache.busy) return cache.busy;
-  cache.busy = fetchLessons(REPO).then((v) => {
-    cache.value = v; cache.at = Date.now(); cache.busy = null; return v;
-  });
-  return cache.busy;
+  const p = fetchLessons(REPO)
+    .catch(() => ({ error: 'lessons unavailable: the tool could not be run' }))
+    .then((v) => { cache.value = v; cache.at = Date.now(); return v; })
+    .finally(() => { if (cache.busy === p) cache.busy = null; });    // never left pending or rejected
+  cache.busy = p;
+  return p;
 }
 
 /** Last answer; starts a refresh when it is older than TTL_MS. */

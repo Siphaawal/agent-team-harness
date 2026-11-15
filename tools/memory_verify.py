@@ -123,8 +123,9 @@ def main(argv=None):
     # machine's excludes on: a commit made here uses them, so that is what decides what reaches the repo.
     must_ignore = ["memory/_gen/INDEX.md", ".claude/state/x", "tools/leak_patterns.txt", ".claude/settings.local.json"]
     must_commit = [".claude/settings.json", ".claude/skills/wrap/SKILL.md", ".claude/skills/team-lead/SKILL.md",
-                   ".claude/agents/memory-librarian.md", ".claude/agents/reviewer.md",
-                   ".claude/agent-memory/reviewer/MEMORY.md", ".claude/hooks/load-persona.sh",
+                   ".claude/agents/memory-librarian.md", ".claude/agents/reviewer.md", ".claude/agents/builder.md",
+                   ".claude/agent-memory/reviewer/MEMORY.md", ".claude/agent-memory/builder/MEMORY.md",
+                   ".claude/hooks/load-persona.sh",
                    "memory/lessons/x.md", "memory/log/x.md", "agent/IDENTITY.md"]
     rc, out = run(["git", "check-ignore", "--no-index"] + must_ignore + must_commit)
     ignored = set(l.strip() for l in out.splitlines())

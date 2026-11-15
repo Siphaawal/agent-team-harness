@@ -25,11 +25,23 @@ Restore from a COPY instead (cp the file aside before editing, cp it back). If t
 checked, add the literal marker `# git-guard-ok` to the command; overrides are logged to
 .claude/state/git-guard-overrides.log. Internal errors fail OPEN but are logged to .claude/state/git-guard-errors.log.
 
+Review rule: a `git commit` carrying REVIEW_MIN_LINES or more changed lines is blocked unless a reviewer / verifier /
+adversary agent was dispatched in this session after the last SUCCESSFUL commit (read from the session transcript).
+"Every build gets an independent review" written as prose gets skipped exactly when a build feels finished. The count
+comes from the PARSED commit, never a regex over the command text: a pathspec commit (`git commit -m x a.py`) is counted
+for those paths' working-tree state, -a / --all count every tracked change, a real `git add` earlier in the same
+command line adds exactly what git's own `add --dry-run` says it stages (NEW files at their full length; an unrelated
+unstaged file is not counted), --pathspec-from-file counts the whole tracked tree, and a word such as "add" inside the
+commit message changes nothing. An unreadable transcript or line count, and a commit whose repo cannot be resolved
+(`cd $VAR && git commit`), fail open (logged). `# no-review-ok: <reason>` overrides (logged to git-guard-overrides.log).
+Known limits, not chased: git aliases (`git ci`), and merge / cherry-pick / am / rebase, which commit without `commit`.
+
 Self-test (builds a real temporary repo): python3 git-guard.py test
 """
 import atexit
 import datetime
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -262,6 +274,242 @@ def kill_verdict(cmd):
             "it, add '# kill-ok' to the command.")
 
 
+# ---- review rule ----------------------------------------------------------------------------------------------------
+REVIEW_MIN_LINES = 150
+REVIEW_AGENTS = {"reviewer", "verifier", "adversary"}
+# `git commit` options that consume the NEXT argument when no value is attached (every other option is a flag).
+COMMIT_VALUE_LONG = {"--message", "--file", "--reuse-message", "--reedit-message", "--author", "--date", "--fixup",
+                     "--squash", "--cleanup", "--template", "--trailer", "--pathspec-from-file"}
+COMMIT_VALUE_SHORT = set("mFCct")
+
+
+ADD_INTERACTIVE = {"-p", "--patch", "-i", "--interactive", "-e", "--edit"}   # dropped from the dry run (they prompt)
+
+
+def _git(repo, args):
+    """stdout of `git -C repo <args>` (bytes), or None on any failure."""
+    try:
+        r = subprocess.run(["git", "-C", repo, "-c", "core.quotepath=false"] + list(args), capture_output=True,
+                           timeout=15, stdin=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def numstat(repo, args):
+    """{top-level-relative path: added + deleted lines} for `git diff <args>` (binary files count 0); None if unreadable."""
+    out = _git(repo, ["diff", "--numstat", "-z", "--no-renames"] + list(args))
+    if out is None:
+        return None
+    res = {}
+    for rec in out.decode("utf-8", "replace").split("\0"):
+        p = rec.split("\t", 2)
+        if len(p) == 3:
+            res[p[2]] = (int(p[0]) if p[0].isdigit() else 0) + (int(p[1]) if p[1].isdigit() else 0)
+    return res
+
+
+def add_set(repo, add_argv):
+    """Top-level-relative paths a `git add` (argv after 'add') would stage, from git's own dry run - so -A, -u, ., a
+    directory, a glob and --pathspec-from-file mean exactly what git makes of them. Empty when the dry run fails."""
+    args = [a for a in add_argv if a not in ADD_INTERACTIVE and a not in ("-n", "--dry-run")]
+    out = _git(repo, ["add", "--dry-run", "--ignore-missing"] + args)
+    paths = set()
+    for line in (out or b"").decode("utf-8", "replace").splitlines():
+        for verb in ("add '", "remove '"):
+            if line.startswith(verb) and line.endswith("'"):
+                paths.add(line[len(verb):-1])
+    return paths
+
+
+def file_lines(path):
+    """Line count of a NEW file as `git diff` would count it (a NUL byte in the first 8 KB = binary = 0)."""
+    n, last, first = 0, b"\n", True
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                if first and b"\0" in chunk[:8192]:
+                    return 0
+                first = False
+                n += chunk.count(b"\n")
+                last = chunk[-1:]
+    except OSError:
+        return 0
+    return n + (last != b"\n")
+
+
+def commit_lines(repo, shape, add_argvs):
+    """Added + deleted lines the commit will carry, or None when unreadable (no HEAD, git error).
+    shape = commit_shape(argv); add_argvs = argvs of the `git add` calls that run BEFORE it in the same command line.
+    - plain commit: what is staged, plus what those adds stage (tracked files at their worktree state, NEW files at
+      their full length - `git diff HEAD` never lists an untracked file, so a build made of new files counted 0);
+    - -a / --all: every tracked change, plus the new files the adds stage;
+    - pathspec commit (--only, the default): those paths' WORKING-TREE state whatever the index holds, plus new files
+      under them that the adds stage; --include adds the index; --pathspec-from-file counts the whole tracked tree.
+    Files outside the adds' pathspecs are never counted: an unrelated unstaged change does not block a small commit."""
+    all_flag, include, paths, from_file = shape
+    head = numstat(repo, ["HEAD"])
+    top = _git(repo, ["rev-parse", "--show-toplevel"])
+    if head is None or top is None:
+        return None
+    top = top.decode("utf-8", "replace").strip()
+    staged_by_add = set()
+    for av in add_argvs:
+        staged_by_add |= add_set(repo, av)
+    new = {p: file_lines(os.path.join(top, p)) for p in staged_by_add
+           if p not in head and os.path.isfile(os.path.join(top, p))}
+    if from_file:
+        carry = dict(head)
+    elif paths and not include:
+        carry = numstat(repo, ["HEAD", "--"] + list(paths))
+        under = _git(repo, ["ls-files", "-o", "--exclude-standard", "--full-name", "-z", "--"] + list(paths))
+        if carry is None or under is None:
+            return None
+        under = set(under.decode("utf-8", "replace").split("\0"))
+        new = {p: n for p, n in new.items() if p in under}
+    else:
+        carry = numstat(repo, ["--cached"])
+        if carry is None:
+            return None
+        if all_flag:
+            carry.update(head)
+        carry.update({p: head[p] for p in staged_by_add if p in head})
+        if paths:
+            more = numstat(repo, ["HEAD", "--"] + list(paths))
+            if more is None:
+                return None
+            carry.update(more)
+    carry.update(new)
+    return sum(carry.values())
+
+
+def is_commit(cmd):
+    """A real `git commit` call, parsed like every other git call (a regex also matched `grep commit git-guard.py`)."""
+    if "commit" not in cmd:
+        return False
+    try:
+        return any(argv and argv[0] == "commit" for _, argv, _ in git_calls(cmd, "."))
+    except Exception:
+        return False
+
+
+def reviewed_since_commit(transcript):
+    """True when a review agent was dispatched (and the dispatch was not refused) after the last SUCCESSFUL git commit
+    in this transcript. A commit the guard blocked does not count, or the retry after the review would block forever.
+    None when the transcript cannot be read."""
+    try:
+        fh = open(transcript, "r", encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    commits, reviews, pos, last_commit, last_review = set(), set(), 0, -1, -1
+    with fh:
+        for line in fh:
+            pos += 1
+            if "tool_" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            content = (rec.get("message") or {}).get("content") if isinstance(rec, dict) else None
+            if not isinstance(content, list):
+                continue
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("type") == "tool_use":
+                    inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                    if c.get("name") in ("Agent", "Task") and inp.get("subagent_type") in REVIEW_AGENTS:
+                        reviews.add(c.get("id"))
+                    elif c.get("name") in ("Bash", "PowerShell") and is_commit(str(inp.get("command") or "")):
+                        commits.add(c.get("id"))
+                elif c.get("type") == "tool_result" and not c.get("is_error"):
+                    tid = c.get("tool_use_id")
+                    if tid in reviews:
+                        last_review = pos
+                    elif tid in commits and "BLOCKED by git-guard" not in json.dumps(c.get("content")):
+                        last_commit = pos
+    return last_review > last_commit
+
+
+def commit_shape(argv):
+    """(all_flag, include_flag, pathspecs, pathspec_from_file) from a parsed `git commit` argv. Parsed, never regexed
+    off the raw command: a regex for 'add' matched the word inside the commit MESSAGE."""
+    all_flag = include = from_file = False
+    paths, i, args = [], 0, argv[1:]
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            paths.extend(args[i + 1:])
+            break
+        if a.startswith("--"):
+            name = a.split("=", 1)[0]
+            if name == "--all":
+                all_flag = True
+            elif name == "--include":
+                include = True
+            if name == "--pathspec-from-file":
+                from_file = True
+            if name in COMMIT_VALUE_LONG and "=" not in a:
+                i += 1
+        elif a.startswith("-") and len(a) > 1:
+            for j, ch in enumerate(a[1:]):
+                if ch == "a":
+                    all_flag = True
+                elif ch == "i":
+                    include = True
+                elif ch in COMMIT_VALUE_SHORT:
+                    if j == len(a) - 2:          # value is the next argument (-m "x", -am "x")
+                        i += 1
+                    break                        # anything after the letter is its attached value (-m"x")
+        else:
+            paths.append(a)
+        i += 1
+    return all_flag, include, paths, from_file
+
+
+def same_dir(a, b):
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def review_verdict(cmd, cwd, transcript, lines_fn=commit_lines, reviewed_fn=reviewed_since_commit):
+    """-> None (allow) or the block message for a large unreviewed commit."""
+    if "# no-review-ok" in cmd:
+        return None
+    calls = list(git_calls(cmd, cwd))
+    for k, (repo, argv, seg) in enumerate(calls):
+        if not argv or argv[0] != "commit":
+            continue
+        if repo == UNRESOLVED:
+            log("git-guard-errors.log", "review rule: commit repo unresolved (cd to a variable?), not counted")
+            continue
+        # `git add` calls that run BEFORE this commit in the same repo stage more; one whose repo is unknown is
+        # counted as `git add -A` here (over-count rather than miss)
+        adds = [["-A"] if r == UNRESOLVED else av[1:] for r, av, _ in calls[:k]
+                if av and av[0] == "add" and (r == UNRESOLVED or same_dir(r, repo))]
+        n = lines_fn(repo, commit_shape(argv), adds)
+        if n is None:
+            log("git-guard-errors.log", "review rule: line count unreadable, commit allowed")
+            continue
+        if n < REVIEW_MIN_LINES:
+            continue
+        rv = reviewed_fn(transcript) if transcript else None
+        if rv is None:
+            log("git-guard-errors.log", "review rule: transcript unreadable, commit allowed")
+            continue
+        if rv:
+            continue
+        return ("BLOCKED by git-guard (review rule): this commit carries %d changed lines and no reviewer / verifier / "
+                "adversary agent has been dispatched in this session since the last commit. Every code build gets an "
+                "independent review. Dispatch Agent(subagent_type=\"reviewer\", name=..., model=...) on the diff, apply "
+                "its findings, then commit. If a review is truly not warranted (generated data, a revert, a member "
+                "said ship it), add '# no-review-ok: <reason>' to the command (logged)." % n)
+    return None
+
+
 def verdict(cmd, cwd, dirt_fn=dirt):
     """-> None (allow) or the block message."""
     k = kill_verdict(cmd)
@@ -420,9 +668,172 @@ def selftest():
     got = verdict("git checkout -- a.js", repo, lambda r: None) is not None
     bad += not got
     print(("ok  " if got else "BAD ") + "unreadable repo state blocks", got)
+    bad += review_selftest(tmp, repo)
     shutil.rmtree(tmp, ignore_errors=True)
     print("failures:", bad)
     return 1 if bad else 0
+
+
+def review_selftest(tmp, repo):
+    """Review rule: real transcript files, fake line counts, plus the real line counter on the self-test repo."""
+    bad = 0
+    seq = [0]
+
+    def transcript(*events):
+        seq[0] += 1
+        tr = os.path.join(tmp, "t%d.jsonl" % seq[0])
+        with open(tr, "w", encoding="utf-8") as fh:
+            for i, (kind, extra) in enumerate(events):
+                if kind == "review":            # extra = (subagent_type, refused?)
+                    use = {"type": "tool_use", "id": "a%d" % i, "name": "Agent", "input": {"subagent_type": extra[0]}}
+                    res = {"type": "tool_result", "tool_use_id": "a%d" % i, "is_error": extra[1], "content": "ok"}
+                else:                           # commit; extra = "ok" or "blocked"
+                    use = {"type": "tool_use", "id": "c%d" % i, "name": "Bash", "input": {"command": "git commit -m x"}}
+                    res = {"type": "tool_result", "tool_use_id": "c%d" % i, "is_error": extra == "blocked",
+                           "content": "BLOCKED by git-guard (review rule)" if extra == "blocked" else "[main abc] x"}
+                fh.write(json.dumps({"message": {"content": [use]}}) + "\n")
+                fh.write(json.dumps({"message": {"content": [res]}}) + "\n")
+        return tr
+
+    big, small = (lambda r, sh, ad: 400), (lambda r, sh, ad: 20)
+    # 20 lines staged, 400 in the working tree: anything that reaches past the index counts 400
+    dirty = lambda r, sh, ad: 400 if (sh[0] or sh[2] or sh[3] or ad) else 20
+    rev = ("review", ("reviewer", False))
+    rcases = [
+        ("big commit, no review ever", "git commit -m y", transcript(), big, True),
+        ("small commit, no review", "git commit -m y", transcript(), small, False),
+        ("big commit after a reviewer", "git commit -m y", transcript(rev), big, False),
+        ("verifier counts too", "git commit -m y", transcript(("review", ("verifier", False))), big, False),
+        ("a REFUSED reviewer spawn is not a review", "git commit -m y", transcript(("review", ("reviewer", True))), big,
+         True),
+        ("a librarian is not a review", "git commit -m y", transcript(("review", ("memory-librarian", False))), big,
+         True),
+        ("a review BEFORE the last commit does not cover the next", "git commit -m y", transcript(rev, ("commit", "ok")),
+         big, True),
+        ("review, blocked attempt, retry: allowed", "git commit -m y", transcript(rev, ("commit", "blocked")), big,
+         False),
+        ("override marker", "git commit -m y  # no-review-ok: generated data", transcript(), big, False),
+        ("not a commit", "git status", transcript(), big, False),
+        ("'git commit' inside a grep is not a commit", "grep -n 'git commit' notes.txt", transcript(), big, False),
+        ("add && commit in one line", "git add a.js && git commit -m y", transcript(), big, True),
+        ("dirty: 'add' in the MESSAGE counts staged only", 'git commit -m "fix: add missing line"', transcript(), dirty,
+         False),
+        ("dirty: --message=add counts staged only", "git commit --message=add-thing", transcript(), dirty, False),
+        ("dirty: -m attached add counts staged only", 'git commit -m"add x"', transcript(), dirty, False),
+        ("dirty: -F msgfile is not a pathspec", "git commit -F add.txt", transcript(), dirty, False),
+        ("dirty: plain staged commit allowed", 'git commit -m "Fix typo"', transcript(), dirty, False),
+        ("dirty: pathspec commit counts the worktree", 'git commit -m "x" big.txt', transcript(), dirty, True),
+        ("dirty: -- pathspec commit counts the worktree", 'git commit -m "x" -- big.txt', transcript(), dirty, True),
+        ("dirty: -am counts the worktree", 'git commit -am "x"', transcript(), dirty, True),
+        ("dirty: --all counts the worktree", 'git commit --all -m "x"', transcript(), dirty, True),
+        ("dirty: real git add + commit counts the worktree", 'git add . && git commit -m "x"', transcript(), dirty, True),
+        ("dirty: -i pathspec counts index + paths", 'git commit -i -m "x" big.txt', transcript(), dirty, True),
+    ]
+    shapes = [
+        (["commit", "-m", "fix: add x"], (False, False, [], False)),
+        (["commit", "-am", "x"], (True, False, [], False)),
+        (["commit", "-m", "x", "--", "a b.txt", "c"], (False, False, ["a b.txt", "c"], False)),
+        (["commit", "-F", "msg.txt", "big.txt"], (False, False, ["big.txt"], False)),
+        (["commit", "-minline", "p"], (False, False, ["p"], False)),
+        (["commit", "--author", "A <a@b>", "-i", "x.py"], (False, True, ["x.py"], False)),
+        (["commit", "--pathspec-from-file=l.txt", "-m", "x"], (False, False, [], True)),
+        (["commit", "--pathspec-from-file", "l.txt", "-m", "x"], (False, False, [], True)),
+    ]
+    for argv, want in shapes:
+        got = commit_shape(argv)
+        bad += got != want
+        print(("ok  " if got == want else "BAD ") + "commit_shape %r" % argv[1:], got)
+    for name, cmd, t, lf, want in rcases:
+        got = review_verdict(cmd, repo, t, lines_fn=lf) is not None
+        bad += got != want
+        print(("ok  " if got == want else "BAD ") + "review rule: " + name, got)
+    import _hooklib
+    saved_state, _hooklib.STATE = _hooklib.STATE, os.path.join(tmp, "state")   # the logged line stays in the temp dir
+    try:
+        got = review_verdict("git commit -m y", repo, os.path.join(tmp, "missing.jsonl"), lines_fn=big) is None
+    finally:
+        _hooklib.STATE = saved_state
+    bad += not got
+    print(("ok  " if got else "BAD ") + "review rule: unreadable transcript fails open (logged)", got)
+    # the real counter on the self-test repo: a.js went v1 -> v2 (1 deleted + 1 added); nothing is staged
+    got = (commit_lines(repo, (False, False, ["a.js"], False), []), commit_lines(repo, (False, False, [], False), []),
+           commit_lines(repo, (True, False, [], False), []) >= 6)
+    want = (2, 0, True)
+    bad += got != want
+    print(("ok  " if got == want else "BAD ") + "commit_lines on a real repo (pathspec, staged, -a)", got)
+    return bad + real_review_selftest(tmp)
+
+
+def real_review_selftest(tmp):
+    """The review rule with the REAL line counter on a REAL repo: a 500-line NEW file, a 300-line unstaged change to a
+    tracked file that is NOT being committed, and a 1-line change that is. No review in the transcript."""
+    import _hooklib
+    bad = 0
+    repo = os.path.join(tmp, "rv")
+    run = lambda *a: subprocess.run(["git", "-C", repo] + list(a), capture_output=True, text=True,
+                                    stdin=subprocess.DEVNULL, timeout=30)
+    subprocess.run(["git", "init", "-q", repo], capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+    run("config", "user.email", "t@t"); run("config", "user.name", "t"); run("config", "core.autocrlf", "false")
+    for f, body in (("big.py", "x = 1\n"), ("small.txt", "x\n")):
+        with open(os.path.join(repo, f), "w", newline="\n") as fh:
+            fh.write(body)
+    run("add", "-A"); run("commit", "-qm", "init")
+    with open(os.path.join(repo, "big.py"), "w", newline="\n") as fh:            # unstaged, never committed below
+        fh.write("".join("v%d = 1\n" % i for i in range(300)))
+    with open(os.path.join(repo, "small.txt"), "w", newline="\n") as fh:
+        fh.write("y\n")
+    with open(os.path.join(repo, "new_module.py"), "w", newline="\n") as fh:     # NEW, untracked
+        fh.write("".join("w%d = 2\n" % i for i in range(500)))
+    with open(os.path.join(repo, "list.txt"), "w", newline="\n") as fh:
+        fh.write("big.py\n")
+    tr = os.path.join(tmp, "rv-empty.jsonl")
+    open(tr, "w").close()
+    shape = lambda *argv: commit_shape(["commit"] + list(argv))
+    counts = [
+        ("new file added in the same line counts its full length", (repo, shape("-m", "x"), [["new_module.py"]]), 500),
+        ("only the added small file counts", (repo, shape("-m", "x"), [["small.txt"]]), 2),
+        ("-a counts tracked changes plus the added new file", (repo, shape("-am", "x"), [["new_module.py"]]), 803),
+    ]
+    for name, args, want in counts:
+        got = commit_lines(*args)
+        bad += got != want
+        print(("ok  " if got == want else "BAD ") + "commit_lines real: " + name, got)
+    cases = [
+        ("git add new_module.py && git commit -m 'feat: parser'", repo, True),          # 500 NEW lines
+        ("git add -A && git commit -m x", repo, True),
+        ("git add . ; git commit -m x", repo, True),
+        ("git add new_module.py && git commit -m x new_module.py", repo, True),          # pathspec + new file
+        ("git -C " + repo.replace("\\", "/") + " add new_module.py && git -C " + repo.replace("\\", "/") +
+         " commit -m x", tmp, True),
+        ("git add -u && git commit -m x", repo, True),                                    # tracked big.py
+        ("git commit --pathspec-from-file=list.txt -m x", repo, True),                    # big.py via the file
+        ("git commit --pathspec-from-file list.txt -m x", repo, True),
+        ("git add small.txt && git commit -m 'fix typo'", repo, False),                   # big.py not in this commit
+        ("git add small.txt\ngit commit -m \"$(cat <<'EOF'\nfix: typo\nEOF\n)\"", repo, False),
+        ("git add small.txt && git commit -m x small.txt", repo, False),
+        ("git add new_module.py && git commit -m x small.txt", repo, False),             # pathspec excludes the new file
+        ("git commit -m x && git add new_module.py", repo, False),                        # an add AFTER the commit
+        ("git commit -m x", repo, False),                                                 # nothing staged
+    ]
+    saved_state, _hooklib.STATE = _hooklib.STATE, os.path.join(tmp, "rv-state")
+    try:
+        for cmd, cwd, want in cases:
+            got = review_verdict(cmd, cwd, tr) is not None
+            bad += got != want
+            print(("ok  " if got == want else "BAD ") + "review rule real: " + repr(cmd[:60]), got)
+        got = review_verdict("cd $SOMEVAR && git commit -am x", repo, tr) is None
+        errlog = os.path.join(tmp, "rv-state", "git-guard-errors.log")
+        logged = os.path.exists(errlog) and "unresolved" in open(errlog, encoding="utf-8").read()
+        bad += not (got and logged)
+        print(("ok  " if got and logged else "BAD ") + "review rule: unresolved commit repo is skipped AND logged",
+              got, logged)
+        run("add", "new_module.py")                                                       # control: staged earlier
+        got = review_verdict("git commit -m x", repo, tr) is not None
+        bad += not got
+        print(("ok  " if got else "BAD ") + "review rule real: new file staged in an earlier call", got)
+    finally:
+        _hooklib.STATE = saved_state
+    return bad
 
 
 def audit_line(data, cmd):
@@ -444,12 +855,14 @@ def main():
     if "git" not in re.sub(r"[\"'\\]", "", cmd) and not KILL_BROAD.search(cmd):   # kill rule runs on git-free commands
         sys.exit(0)
     try:
-        msg = verdict(cmd, data.get("cwd") or os.getcwd())
+        cwd = data.get("cwd") or os.getcwd()
+        msg = verdict(cmd, cwd) or review_verdict(cmd, cwd, data.get("transcript_path"))
     except Exception as e:
         fail_open("git-guard", e)                             # fail open, but leave a trace
     if msg is None:
-        if "# git-guard-ok" in cmd:
-            log("git-guard-overrides.log", audit_line(data, cmd))
+        for marker in ("# git-guard-ok", "# no-review-ok"):
+            if marker in cmd:
+                log("git-guard-overrides.log", marker[2:] + " " + audit_line(data, cmd))
         sys.exit(0)
     log("git-guard-blocks.log", audit_line(data, cmd))
     sys.stderr.write(msg + "\n")

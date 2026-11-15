@@ -94,6 +94,12 @@
           <svg class="tgsvg" id="tgsvg" aria-label="team graph"></svg>
         </div>
       </div>
+      <!-- the repo's memory: nodes = memories and lessons, edges = [[links]], supersedes, shared tags (memgraph.js) -->
+      <div class="panel grow" id="p-memgraph">
+        <h2>MEMORY GRAPH<span class="hz"></span><span class="stamp" id="mgStamp"></span><a class="chip btn mgobs" id="mgObsidian" hidden>OBSIDIAN</a></h2>
+        <div class="mgraph" id="mgraph"><canvas class="mgfx" id="mgfx" aria-label="memory graph"></canvas></div>
+        <div class="mginfo" id="mginfo"></div>
+      </div>
     </section>
   </main>
 
@@ -122,5 +128,6 @@
 <script src="graph.js"></script>
 <script src="agent.js"></script>
 <script src="lesson.js"></script>
+<script src="memgraph.js"></script>
 </body>
 </html>

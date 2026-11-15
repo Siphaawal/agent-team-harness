@@ -143,6 +143,66 @@ class TestModelGuard(Repo):
         self.assertEqual(self.spawn(name="b", model="sonnet", prompt="x\nMODEL-BY-JOB: builder -> sonnet\n")[0], 0)
         self.assertEqual(self.spawn(subagent_type="memory-librarian", prompt="goal")[0], 0)        # exempt
 
+    def test_a_builder_role_spawn_is_not_exempt(self):
+        line = "MODEL-BY-JOB: builder -> sonnet"
+        role = {"subagent_type": "builder"}
+        self.assertEqual(self.spawn(model="sonnet", prompt=line, **role)[0], 2)                    # no name
+        self.assertEqual(self.spawn(name="builder-api", prompt=line, **role)[0], 2)                # no model
+        self.assertEqual(self.spawn(name="builder-api", model="sonnet", prompt="do it", **role)[0], 2)
+        self.assertEqual(self.spawn(name="builder-api", model="sonnet", prompt=line, **role)[0], 0)
+
+
+class TestTeamGateWiring(unittest.TestCase):
+    """settings.json wires each team gate to the event, matcher and mode its code expects. A hook that exists but is
+    not wired (or wired with the wrong mode) never runs - and a gate that never runs looks exactly like a quiet one."""
+
+    WANT = [  # (event, matcher or None, script, mode)
+        ("PostToolUse", "Agent", "team-gate.py", "mark"),
+        ("PostToolUse", None, "team-gate.py", "nag"),
+        ("PostToolUse", "TaskStop", "team-stall-gate.py", "stopped"),
+        ("Stop", None, "team-gate.py", "stop"),
+        ("Stop", None, "team-stall-gate.py", "stop"),
+        ("TeammateIdle", None, "team-stall-gate.py", "idle"),
+        ("PreToolUse", "Bash", "git-guard.py", ""),
+        ("PreToolUse", "Bash", "heredoc-guard.py", ""),
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(SRC, ".claude", "settings.json"), encoding="utf-8") as f:
+            cls.settings = json.load(f)
+
+    def wired(self):
+        out = set()
+        for event, groups in self.settings.get("hooks", {}).items():
+            for g in groups:
+                for h in g.get("hooks", []):
+                    cmd = h.get("command", "")
+                    for script in ("team-gate.py", "team-stall-gate.py", "git-guard.py", "heredoc-guard.py"):
+                        tail = '/.claude/hooks/%s"' % script
+                        if tail in cmd:
+                            mode = cmd.split(tail, 1)[1].strip()
+                            out.add((event, g.get("matcher"), script, mode))
+                            self.assertTrue(cmd.startswith('python3 "$CLAUDE_PROJECT_DIR/'), cmd)
+        return out
+
+    def test_every_gate_is_wired(self):
+        got = self.wired()
+        for want in self.WANT:
+            self.assertIn(want, got)
+
+    def test_each_mode_exists_in_the_script(self):
+        """Every wired mode is one the script accepts (an unknown mode exits 64 and the gate silently never runs)."""
+        for event, matcher, script, mode in self.wired():
+            if not mode:
+                continue
+            rc, _, err = run([PY, "-I", os.path.join(SRC, ".claude", "hooks", script), mode], SRC, "{}")
+            self.assertNotEqual(rc, 64, "%s %s: %s" % (script, mode, err))
+
+    def test_watchdog_command_is_allowlisted(self):
+        allow = self.settings["permissions"]["allow"]
+        self.assertIn('Bash(python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/team-watchdog.py":*)', allow)
+
 
 class TestSubagentCore(Repo):
     def test_injects_core(self):

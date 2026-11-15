@@ -16,7 +16,9 @@
       "Bash(python3 tools/leak_scan.py)",
       "Bash(python3 tools/agent_gen.py --check)",
       "Bash(python3 tests/run_all.py)",
-      "Bash(bash .claude/hooks/load-persona.sh check 8)"
+      "Bash(bash .claude/hooks/load-persona.sh check 8)",
+      "Bash(python3 .claude/hooks/team-watchdog.py:*)",
+      "Bash(python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-watchdog.py\":*)"
     ]
   },
   "hooks": {
@@ -68,12 +70,20 @@
       {
         "matcher": "Agent",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" mark" }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" mark" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-gate.py\" mark" }
+        ]
+      },
+      {
+        "matcher": "TaskStop",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-stall-gate.py\" stopped" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" mark" }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" mark" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-gate.py\" nag" }
         ]
       }
     ],
@@ -81,7 +91,9 @@
       {
         "hooks": [
           { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/librarian-gate.py\" stop" },
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" stop" }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/skills-gate.py\" stop" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-gate.py\" stop" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-stall-gate.py\" stop" }
         ]
       }
     ],
@@ -116,7 +128,8 @@
     "TeammateIdle": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-event-log.py\"" }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-event-log.py\"" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/team-stall-gate.py\" idle" }
         ]
       }
     ]
