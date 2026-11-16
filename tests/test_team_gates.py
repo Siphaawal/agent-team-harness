@@ -369,9 +369,42 @@ class TestMutations(unittest.TestCase):
         ("git-guard.py", "        elif c in \"'\\\"\":\n            q = c", "        elif False:\n            q = c", "git-guard.py"),
         # a trailing `}` / `fi` / `)` taken as a pathspec
         ("git-guard.py", "    while paths and paths[-1] in SHELL_TRAILERS:", "    while False:", "git-guard.py"),
-        # a magic pathspec or quote fragment no longer counts the whole tree
-        ("git-guard.py", "    odd = [p for p in paths if p.startswith(\":\") or \"'\" in p or '\"' in p]", "    odd = []",
+        # a magic pathspec no longer counts the whole tree
+        ("git-guard.py", "    odd = [p for p in paths if p.lstrip(\"'\\\"\").startswith(\":\")]", "    odd = []", "git-guard.py"),
+        # a stray quote counts the whole tree again / a magic fragment that keeps its opening quote is not magic
+        ("git-guard.py", "    odd = [p for p in paths if p.lstrip(\"'\\\"\").startswith(\":\")]",
+         "    odd = [p for p in paths if p.startswith(\":\") or \"'\" in p or '\"' in p]", "git-guard.py"),
+        ("git-guard.py", "    odd = [p for p in paths if p.lstrip(\"'\\\"\").startswith(\":\")]",
+         "    odd = [p for p in paths if p.startswith(\":\")]", "git-guard.py"),
+        # a stray-quote token stays a pathspec (the commit counts 0 instead of its index)
+        ("git-guard.py", "        paths = [p for p in paths if p not in stray]", "        pass", "git-guard.py"),
+        # a parenthesis inside quotes cuts the command again (a message word read as a pathspec)
+        ("git-guard.py", "    text = None if old or (\"(\" not in cmd and \")\" not in cmd) else quoted_parens(cmd)",
+         "    text = None", "git-guard.py"),
+        # `$(` inside "..." read as text / an escaped quote ends "..." / an apostrophe in a comment opens a quote
+        ("git-guard.py", "            elif c == \"$\" and cmd.startswith(\"(\", i + 1):", "            elif False:", "git-guard.py"),
+        ("git-guard.py", "        elif top == '\"':\n            if c == \"\\\\\":", "        elif top == '\"':\n            if False:",
          "git-guard.py"),
+        ("git-guard.py", "        elif c == \"#\" and (i == 0 or cmd[i - 1] in \" \\t\\n;&|(\"):", "        elif False:", "git-guard.py"),
+        # the discard rules no longer judge the old reading (every parenthesis cuts) as well
+        ("git-guard.py", "        calls += [c for c in git_calls(cmd, cwd, old=True) if (c[0], tuple(c[1])) not in seen]",
+         "        pass", "git-guard.py"),
+        ("git-guard.py", "    if any(\"(\" in s or \")\" in s for s, _ in split_cmd(",
+         "    if False and any(\"(\" in s or \")\" in s for s, _ in split_cmd(", "git-guard.py"),
+        # an add whose arguments the hook cannot resolve ($f, {}, $(...), xargs) is dry-run as it stands (counts 0)
+        ("git-guard.py", "    if not any(unresolved_add(a) for _, a in adds):\n        return adds",
+         "    if True:\n        return adds", "git-guard.py"),
+        ("git-guard.py", "            argv = argv + [ADD_ARGS_UNKNOWN]", "            pass", "git-guard.py"),
+        ("git-guard.py", "        opens = sep == \"$(\" or (sep == \"`\" and ticks % 2 == 0)", "        opens = sep == \"$(\"",
+         "git-guard.py"),
+        ("git-guard.py", "        opens = sep == \"$(\" or (sep == \"`\" and ticks % 2 == 0)",
+         "        opens = sep == \"$(\" or sep == \"`\"", "git-guard.py"),
+        ("git-guard.py", "    calls = list(git_calls(cmd, cwd, count=True))", "    calls = list(git_calls(cmd, cwd))",
+         "git-guard.py"),
+        # a `git add` that find -exec / env starts is not counted / any later `git add` word is counted
+        ("git-guard.py", "            later = _runner_git(w0) if count else 0", "            later = 0", "git-guard.py"),
+        ("git-guard.py", "            return j if {re.sub(r\"\\.exe$\", \"\", os.path.basename(b).lower()) for b in w[:j]} & "
+         "COUNT_RUNNERS else 0", "            return j", "git-guard.py"),
         # a file in HEAD, out of the index and written again counts only its deletion
         ("git-guard.py", "    regrown = [p for p in files if p in head and p not in known]", "    regrown = []", "git-guard.py"),
         # dry-run output that cannot be parsed is skipped instead of counting the add as -A
@@ -492,7 +525,7 @@ class TestMutations(unittest.TestCase):
                     with open(path, "w", encoding="utf-8", newline="\n") as fh:
                         fh.write(src.replace(old, new))
                     r = subprocess.run([PY, "-I", os.path.join(tmp, ".claude", "hooks", selftest), "test"], cwd=tmp,
-                                       capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+                                       capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
                     self.assertNotEqual(r.returncode, 0, "self-test still passes with the guard removed")
                     self.assertIn("BAD ", r.stdout)
                 finally:
@@ -505,7 +538,7 @@ class TestMutations(unittest.TestCase):
             copy_tree(tmp)
             for selftest in ("team-gate.py", "team-stall-gate.py", "team-watchdog.py"):
                 r = subprocess.run([PY, "-I", os.path.join(tmp, ".claude", "hooks", selftest), "test"], cwd=tmp,
-                                   capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+                                   capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
                 self.assertEqual(r.returncode, 0, selftest + "\n" + r.stdout[-2000:])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

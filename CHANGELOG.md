@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.1.2 - 2026-11-15
+
+One false block that v1.1.1 introduced in `git-guard.py`, and the parsing flaw behind it. Upgrading: pull.
+
+### Fixed
+
+- `git-guard.py` review rule: a small commit whose quoted message holds an apostrophe before a parenthesis
+  (`git commit -m "fix: don't crash (again)"`) was blocked in v1.1.1 whenever the tree held enough unrelated unstaged
+  changes: the message was cut at the parenthesis, a message word was read as a pathspec, and the whole tree was
+  counted. The command splitter now treats `(` and `)` inside quotes as text. `$(...)` and backticks inside double
+  quotes still run, and the rules that guard uncommitted work also judge the old reading, so none of them got weaker.
+- The same flaw under-counted two commit forms in every earlier version; both are counted now: a quoted message
+  holding both braces and parentheses, and a path given after a message with parentheses
+  (`git commit -m "fix: handle (x) case" a.txt`).
+- A pathspec token with a stray quote character no longer makes the whole tree count; only a magic pathspec
+  (`:(glob)...`, `:!x`, also with a leftover opening quote) does.
+- A `git add` whose arguments the hook cannot resolve is counted as `git add -A` (logged) instead of not at all: a
+  shell or PowerShell variable (`for f in ...; do git add $f; done`, `"$f"`, `${f}`, `$_`, `%VAR%`), the `{}` of
+  `find -exec` or `xargs -I{}`, a plain `xargs git add`, `$(...)` or backticks. A `git add` started by `find -exec`,
+  `xargs`, `env` or `command` is now seen for the count.
+
+### Changed
+
+- Known limits of the review rule after this release. Not counted: `git commit --amend` beyond its new change; a
+  `git mv`, `git rm` or a file created in the same line as the commit; a variable used as a commit pathspec
+  (`git commit -m x $f`); a commit pathspec whose file name holds a quote character (new in this release); an add
+  fed by `parallel`; a commit that follows a `cd` the shell does not apply (in a pipeline, a subshell or the
+  background, or a `cd` that fails), which is then counted in the wrong directory; a commit followed by a `#`
+  comment that holds braces; git aliases and merge / cherry-pick / am / rebase. Over-counted: a new symlink;
+  `git rm --cached f && git add f`; an add in a directory outside any repository; an unresolved add in a tree with
+  unrelated changes (it is counted as `git add -A`), which includes a literal `$` in a single-quoted file name and
+  an add whose output is redirected to a `"$VAR"` target (new in this release).
+- Known limits of the rules that guard uncommitted work, present in every version so far: a discard after a `cd`
+  that fails (`cd missing-dir; git reset --hard` - the shell stays in the repository, the hook follows the `cd`),
+  and a discard inside a quoted command string that holds a separator (`bash -c "git status && git reset --hard"`,
+  `powershell -Command "...; git stash"`) are not blocked.
+- Self-test case labels in `git-guard.py` now say what they check; more cases and mutation entries.
+- `tests/test_team_gates.py`: each mutation run gets 15 minutes instead of 5 (on a heavily loaded machine a run could
+  time out and be reported as an error).
+
 ## v1.1.1 - 2026-11-15
 
 Fixes to the guard hooks, found by reviewing v1.1 again. Upgrading from v1.1: pull; nothing to configure.

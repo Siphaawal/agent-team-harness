@@ -198,15 +198,112 @@ def brace_groups(seg):
     return parts
 
 
-def git_calls(cmd, cwd, depth=0):
-    """Yield (repo_dir, argv_after_git, raw_segment) for every git invocation, following cd / Set-Location."""
+def quoted_parens(cmd):
+    """The indexes of the `(` and `)` that are TEXT inside '...' or "..." (`-m "fix: don't crash (x)"`), or None when
+    the quotes do not balance (the caller then splits at every parenthesis, as before). Inside "..." a `$(` and a
+    backtick still open a command substitution (`echo "$(git checkout -- f)"` runs git) and a backslash escapes the
+    next character; '...' ($'...' read the same way, as in brace_groups) is text up to its closing quote. A `#` that
+    starts an unquoted word starts a comment to the end of the line: an apostrophe there opens no quote."""
+    text, stack, i, n = set(), [], 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        top = stack[-1] if stack else None
+        if top == "'":
+            if c == "'":
+                stack.pop()
+            elif c in "()":
+                text.add(i)
+        elif top == '"':
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                stack.pop()
+            elif c == "$" and cmd.startswith("(", i + 1):
+                stack.append("(")
+                i += 1
+            elif c == "`":
+                stack.append("`")
+            elif c in "()":
+                text.add(i)
+        elif c == "\\":                                   # unquoted, in a ( ) / $( ) group, or in backticks
+            i += 1
+        elif c in "'\"":
+            stack.append(c)
+        elif c == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+        elif c == "(":
+            stack.append("(")
+        elif c == ")":
+            if top == "(":
+                stack.pop()
+        elif c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|("):
+            j = cmd.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        i += 1
+    return None if stack else text
+
+
+PAREN_MASK = (chr(0xE000), chr(0xE001))   # private-use stand-ins for a quoted `(` / `)` while the command is split
+
+
+def split_cmd(cmd, old=False):
+    """[(segment, the separator that ends it)]: SPLIT's cuts, except that a `(` or `)` inside quotes is text, not a
+    separator - a message `"fix: don't crash (again)"` was cut in two and its words read as pathspecs. old=True (or
+    quotes that do not balance): every parenthesis cuts, as before. Every other separator cuts exactly as before."""
+    text = None if old or ("(" not in cmd and ")" not in cmd) else quoted_parens(cmd)
+    if text and (PAREN_MASK[0] in cmd or PAREN_MASK[1] in cmd):
+        text = None
+    s = "".join(PAREN_MASK[c == ")"] if i in text else c for i, c in enumerate(cmd)) if text else cmd
+    out, pos = [], 0
+    for m in SPLIT.finditer(s):
+        out.append((s[pos:m.start()], m.group().strip()))
+        pos = m.end()
+    out.append((s[pos:], ""))
+    if text:
+        out = [(seg.replace(PAREN_MASK[0], "(").replace(PAREN_MASK[1], ")"), sep) for seg, sep in out]
+    return out
+
+
+def _pieces(cmd, old):
+    """(segment, words, opens): one per brace group of every segment; opens = the piece's words continue into a
+    command substitution (`git add $(ls)`, or an opening backtick) - its real arguments are not in the words."""
+    ticks = 0
+    for s, sep in split_cmd(cmd, old):
+        opens = sep == "$(" or (sep == "`" and ticks % 2 == 0)
+        ticks += sep == "`"
+        groups = brace_groups(s)
+        for k, g in enumerate(groups):
+            yield s, words(g), opens and k == len(groups) - 1
+
+
+COUNT_RUNNERS = {"find", "xargs", "env", "command", "exec", "sudo", "nohup", "nice", "time", "parallel"}
+ADD_ARGS_UNKNOWN = "$(...)"   # added to a counted `git add` whose arguments the hook cannot see (counted as -A)
+
+
+def _runner_git(w):
+    """Index of a `git` word that a runner before it starts (`find . -exec git add {} ;`, `env -i git add f`), else 0."""
+    for j, a in enumerate(w[1:], 1):
+        if os.path.basename(a).lower() in ("git", "git.exe"):
+            return j if {re.sub(r"\.exe$", "", os.path.basename(b).lower()) for b in w[:j]} & COUNT_RUNNERS else 0
+    return 0
+
+
+def git_calls(cmd, cwd, depth=0, old=False, count=False):
+    """Yield (repo_dir, argv_after_git, raw_segment) for every git invocation, following cd / Set-Location.
+    old=True: every `(` / `)` is a separator, quoted or not (the discard rules judge this reading too). count=True (the
+    review rule's line count, nothing else): a `git add` that a runner starts as a later word (find -exec, xargs, env,
+    command) is yielded too, and an add whose arguments come from a substitution or from xargs gets ADD_ARGS_UNKNOWN."""
     cmd = PS_HERESTRING.sub("\n", HEREDOC.sub("\n", cmd))     # message bodies are data, not commands
     here = cwd
-    for seg, w in ((s, words(g)) for s in SPLIT.split(cmd) for g in brace_groups(s)):
-        env_tree = None
+    for seg, w, fed in _pieces(cmd, old):
+        env_tree, w0 = None, w
         while w:
             if w[0].lower() in ("eval", "iex", "invoke-expression") and depth < 3:
-                yield from git_calls(" ".join(w[1:]), here, depth + 1)
+                yield from git_calls(" ".join(w[1:]), here, depth + 1, old, count)
                 w = []
             elif w[0].lower() in ("timeout", "stdbuf"):                          # `timeout 5 git ...`, `stdbuf -o0 git ...`
                 w = w[1:]
@@ -218,7 +315,7 @@ def git_calls(cmd, cwd, depth=0):
                     env_tree = m.group(1)
                 w = w[1:]
             elif os.path.basename(w[0]).lower() in ("xargs", "xargs.exe"):   # `... | xargs git checkout --`
-                w = w[1:]
+                w, fed = w[1:], True
                 while w and w[0].startswith("-"):
                     w = w[2:] if w[0] in XARGS_ARGFLAGS else w[1:]
             else:
@@ -232,11 +329,16 @@ def git_calls(cmd, cwd, depth=0):
         if head in SHELLS and depth < 3:
             for i, a in enumerate(w[1:], 1):
                 if a.lower() in SHELL_CMD_FLAGS and i + 1 < len(w):
-                    yield from git_calls(" ".join(w[i + 1:]), here, depth + 1)
+                    yield from git_calls(" ".join(w[i + 1:]), here, depth + 1, old, count)
                     break
             continue
+        later = 0
         if head not in ("git", "git.exe"):
-            continue
+            later = _runner_git(w0) if count else 0     # the words before any wrapper was stripped (`env -i git`)
+            if not later:
+                continue
+            fed = fed or any(os.path.basename(b).lower() in ("xargs", "xargs.exe") for b in w0[:later])
+            w = w0[later:]
         argv, repo = w[1:], (resolve(here, env_tree) if env_tree else here)
         while argv and argv[0].startswith("-"):
             a = argv[0]
@@ -252,6 +354,11 @@ def git_calls(cmd, cwd, depth=0):
                 repo = resolve(repo, os.path.dirname(winpath(a.split("=", 1)[1]).rstrip("/")) or "."); argv = argv[1:]
             else:
                 argv = argv[1:]
+        is_add = bool(argv) and argv[0] == "add"
+        if later and not is_add:                       # a runner's later git word: only its adds are counted
+            continue
+        if count and fed and is_add:
+            argv = argv + [ADD_ARGS_UNKNOWN]
         yield repo, argv, seg
 
 
@@ -617,11 +724,15 @@ def _commit_lines(repo, shape, add_argvs):
         carry.update(_untracked_all(top))
         return sum(carry.values())
     staged_by_add = set().union(*sets) if sets else set()
-    # a pathspec git reads as magic (`:(glob)x`, `:!x` - the parser also cuts `:(...)` at its parentheses), or a
-    # quote fragment the parser left behind, is not resolved here: the whole tree is counted (over, never under)
-    odd = [p for p in paths if p.startswith(":") or "'" in p or '"' in p]
+    # a pathspec git reads as magic (`:(glob)x`, `:!x`; an unquoted `:(...)` is still cut at its parentheses, and a
+    # fragment may keep its opening quote) is not resolved here: the whole tree is counted (over, never under)
+    odd = [p for p in paths if p.lstrip("'\"").startswith(":")]
     if odd:
-        log("git-guard-errors.log", "review rule: pathspec magic or quote fragment in a commit, whole tree counted")
+        log("git-guard-errors.log", "review rule: pathspec magic in a commit, whole tree counted")
+    stray = [p for p in paths if p not in odd and ("'" in p or '"' in p)]
+    if stray:                                          # a quote the parser left behind: not a path; the others count
+        log("git-guard-errors.log", "review rule: a pathspec with a stray quote character left out of the count")
+        paths = [p for p in paths if p not in stray]
     if from_file or odd:                               # the path file is not read: the whole tracked tree
         carry = numstat(repo, ["HEAD"])
         carry.update(_add_counts(top, staged_by_add, head=carry))
@@ -762,9 +873,24 @@ def same_repo(a, b, cache):
 def commit_adds(calls, k, repo, cache):
     """The `git add` calls that run BEFORE calls[k] (a commit in repo) in the same repository, as (directory, argv
     after 'add'): each is dry-run in its own directory. One whose directory is unknown (`cd $VAR`) is counted as
-    `git add -A` in the commit's repo (over-count rather than miss)."""
-    return [(repo, ["-A"]) if r == UNRESOLVED else (r, av[1:]) for r, av, _ in calls[:k]
+    `git add -A` in the commit's repo (over-count rather than miss), and so is one whose arguments the hook cannot
+    resolve (unresolved_add: `git add $f` in a loop, `{}` of find -exec / xargs, a substitution)."""
+    adds = [(repo, ["-A"]) if r == UNRESOLVED else (r, av[1:]) for r, av, _ in calls[:k]
             if av and av[0] == "add" and (r == UNRESOLVED or same_repo(r, repo, cache))]
+    if not any(unresolved_add(a) for _, a in adds):
+        return adds
+    log("git-guard-errors.log", "review rule: a git add with arguments the hook cannot resolve, counted as git add -A")
+    return [(repo, ["-A"]) if unresolved_add(a) else (r, a) for r, a in adds]
+
+
+# an argument that names nothing until the shell expands it: $f "$f" ${f} $_ $(...), %VAR%, {} (find -exec / xargs),
+# a backtick, or a quote the parser left behind
+UNRESOLVED_ARG = re.compile(r"\$|%[A-Za-z_][A-Za-z0-9_]*%|\{\}|`|['\"]")
+
+
+def unresolved_add(args):
+    """True when the arguments of a `git add` (after 'add') hold something the dry run cannot resolve."""
+    return any(UNRESOLVED_ARG.search(a) for a in args)
 
 
 def count_budget(spent=0.0):
@@ -778,7 +904,7 @@ def review_verdict(cmd, cwd, transcript, lines_fn=commit_lines, reviewed_fn=revi
     add in the line (spent: seconds the dirty-tree check of this hook run already used; see count_budget)."""
     if "# no-review-ok" in cmd:
         return None
-    calls = list(git_calls(cmd, cwd))
+    calls = list(git_calls(cmd, cwd, count=True))
     if not any(argv and argv[0] == "commit" for _, argv, _ in calls):
         return None
     _DEADLINE[0], _STOP_AT[0] = time.time() + count_budget(spent), REVIEW_MIN_LINES
@@ -831,7 +957,13 @@ def verdict(cmd, cwd, dirt_fn=dirt):
         return k
     if "# git-guard-ok" in cmd:
         return None
-    for repo, argv, seg in git_calls(cmd, cwd):
+    calls = list(git_calls(cmd, cwd))
+    seen = {(r, tuple(a)) for r, a, _ in calls}
+    # the old reading too (every `(` / `)` cuts, quoted or not): a quote the splitter misreads can only ADD a call
+    # for these rules to judge, never hide one. Only when a quoted parenthesis was kept (else both readings are equal)
+    if any("(" in s or ")" in s for s, _ in split_cmd(PS_HERESTRING.sub("\n", HEREDOC.sub("\n", cmd)))):
+        calls += [c for c in git_calls(cmd, cwd, old=True) if (c[0], tuple(c[1])) not in seen]
+    for repo, argv, seg in calls:
         kind = classify(argv)
         if kind is None:
             continue
@@ -972,6 +1104,10 @@ def selftest():
         ("Stop-Process -Name chrome  # kill-ok", repo, False),
         ("git checkout -- a.js  # git-guard-ok", repo, False),
         ("echo git checkout -- a.js", repo, False),
+        ('echo "$(git checkout -- a.js)"', repo, True),                   # a substitution inside "..." still runs git
+        ("echo `git checkout -- a.js`", repo, True),
+        ('echo "run git stash later"', repo, False),                      # a mention inside quotes is text
+        ('git commit -m "docs: never (git stash) here"', repo, True),     # these rules also cut at every parenthesis
     ]
     bad = 0
     for cmd, cwd, want in cases:
@@ -1080,7 +1216,7 @@ def review_selftest(tmp, repo):
     os.makedirs(tt)
     saved_tempdir, tempfile.tempdir = tempfile.tempdir, tt
     try:
-        bad += real_review_selftest(tmp) + count_selftest(tmp) + round3_selftest(tmp, tt)
+        bad += real_review_selftest(tmp) + count_selftest(tmp) + edge_selftest(tmp, tt)
     finally:
         tempfile.tempdir = saved_tempdir
     left = [n for n in os.listdir(tt) if n.startswith(INDEX_COPY_PREFIX)]
@@ -1329,7 +1465,7 @@ def count_selftest(tmp):
     return bad[0]
 
 
-def round3_selftest(tmp, tt):
+def edge_selftest(tmp, tt):
     """Same-repo adds, shell braces, magic pathspecs, regrown files, unparsed dry runs, the read cap, one budget per
     hook run, and the index copies: on REAL repos, no review in the transcript (a block = counted over 150)."""
     import _hooklib
@@ -1338,7 +1474,7 @@ def round3_selftest(tmp, tt):
 
     def check(name, ok, *shown):
         bad[0] += not ok
-        print(("ok  " if ok else "BAD ") + "round3: " + name, *shown)
+        print(("ok  " if ok else "BAD ") + "edge: " + name, *shown)
 
     def mkrepo(name):
         d = os.path.join(tmp, name)
@@ -1357,14 +1493,14 @@ def round3_selftest(tmp, tt):
         with open(p, "w", newline="\n") as fh:
             fh.write("".join("%s%d = 1\n" % (word, i) for i in range(lines)))
 
-    repo = mkrepo("r3")
+    repo = mkrepo("e1")
     write(repo, "base.txt", 1)
     write(repo, "small.txt", 1)
     write(repo, "sub/s.py", 10)
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "init")
-    tr = os.path.join(tmp, "r3-empty.jsonl")
+    tr = os.path.join(tmp, "e1-empty.jsonl")
     open(tr, "w").close()
-    state = os.path.join(tmp, "r3-state")
+    state = os.path.join(tmp, "e1-state")
     errlog = os.path.join(state, "git-guard-errors.log")
     real_git, saved_hook, saved_state = _git, HOOK_BUDGET_S, _hooklib.STATE
     _hooklib.STATE = state
@@ -1377,7 +1513,7 @@ def round3_selftest(tmp, tt):
         write(repo, "sub/n.py", 300)
         for cmd in ("cd sub && git add n.py && cd .. && git commit -m x", "git -C sub add n.py && git commit -m x"):
             check("add in a subdirectory, commit at the top: blocked " + repr(cmd), blocked(cmd))
-        other = mkrepo("r3-other")                 # another repo holding the SAME untracked name: stages nothing here
+        other = mkrepo("e1-other")                 # another repo holding the SAME untracked name: stages nothing here
         write(other, "base.txt", 1)
         git(other, "add", "-A"); git(other, "commit", "-qm", "init")
         write(other, "sub/n.py", 300)
@@ -1417,6 +1553,7 @@ def round3_selftest(tmp, tt):
                 n = "CountError %s" % e
             check("magic pathspec %s counts the whole tree (160) and is logged" % spec,
                   n == 160 and errlog_has("pathspec magic"), n)
+        quoted_parens_cases(check, repo, blocked, write, git, errlog, errlog_has)
         # directory coverage in a pathspec commit: `git add d/x.py && git commit d` commits d/x.py
         write(repo, "d/x.py", 300)
         check("a directory pathspec covers the new file under it: blocked",
@@ -1443,7 +1580,7 @@ def round3_selftest(tmp, tt):
                 fh.write("x = 1\n" * 300)
             weird = "new\nline.py"
         except OSError as e:
-            print("skip round3: a file name with a newline (this filesystem refuses it: %s)" % e.__class__.__name__)
+            print("skip edge: a file name with a newline (this filesystem refuses it: %s)" % e.__class__.__name__)
         if weird:
             if os.path.exists(errlog):
                 os.remove(errlog)
@@ -1458,9 +1595,9 @@ def round3_selftest(tmp, tt):
                 check("a new file with a non-UTF-8 name: blocked (read through surrogateescape)", got)
                 os.remove(os.path.join(os.fsencode(repo), b"lat\xe9.py"))
             except OSError as e:
-                print("skip round3: a non-UTF-8 file name (refused: %s)" % e.__class__.__name__)
+                print("skip edge: a non-UTF-8 file name (refused: %s)" % e.__class__.__name__)
         else:
-            print("skip round3: a non-UTF-8 file name (Windows and macOS file systems store names as Unicode)")
+            print("skip edge: a non-UTF-8 file name (Windows and macOS file systems store names as Unicode)")
         # reading new files stops at the threshold, and the deadline is checked inside a file
         big = os.path.join(repo, "huge.txt")
         with open(big, "w", newline="\n") as fh:
@@ -1574,6 +1711,88 @@ def round3_selftest(tmp, tt):
         _git, HOOK_BUDGET_S, _hooklib.STATE = real_git, saved_hook, saved_state
         _DEADLINE[0], _STOP_AT[0], _STATUS_DEADLINE[0] = None, None, None
     return bad[0]
+
+
+def quoted_parens_cases(check, repo, blocked, write, git, errlog, errlog_has):
+    """Quoted parentheses, stray quotes and adds the hook cannot resolve, on the edge_selftest repo (sub/s.py holds
+    160 unrelated unstaged lines; the index is clean on entry and on exit)."""
+    calls = lambda cmd, **kw: [argv for _, argv, _ in git_calls(cmd, repo, **kw)]
+    # the splitter: a parenthesis inside quotes is text; a substitution inside "..." still runs; bad quotes: as before
+    got = calls('git commit -m "fix: don\'t crash (again)"')
+    check("a quoted parenthesis does not cut the message", got == [["commit", "-m", "fix: don't crash (again)"]], got)
+    got = calls('git commit -m "say \\"hi\\" (x)" && git status')
+    check("an escaped quote inside \"...\" does not end it", got == [["commit", "-m", 'say "hi" (x)'], ["status"]], got)
+    got = calls('echo "$(git checkout -- f)"') + calls("echo '$(git checkout -- f)'")
+    check("$( inside \"...\" still runs git; inside '...' it is text", got == [["checkout", "--", "f"]], got)
+    got = quoted_parens("git commit -m x # don't (y)\ngit commit -m 'a (b)'")
+    check("an apostrophe in a comment opens no quote", got is not None and len(got) == 2, got)
+    got = calls('echo "oops (x) && git commit -m "a (b)"')
+    check("unbalanced quotes: split as before", got == [argv for _, argv, _ in git_calls(
+        'echo "oops (x) && git commit -m "a (b)"', repo, old=True)] and got, got)
+    # the false block: a small staged commit, a quoted parenthesis, 160 unrelated unstaged lines
+    write(repo, "small.txt", 2)
+    git(repo, "add", "small.txt")
+    for cmd in ('git commit -m "fix: don\'t crash (again)"', 'git commit -m "feat(ui): it\'s done"'):
+        check("small staged commit, quoted parenthesis, unrelated unstaged work: allowed " + repr(cmd), not blocked(cmd))
+    write(repo, "big.txt", 300)
+    git(repo, "add", "big.txt")
+    check("control: the same message with 300 staged lines is blocked", blocked('git commit -m "fix: don\'t crash (again)"'))
+    write(repo, "big.txt", 302)
+    git(repo, "add", "big.txt")
+    check("braces and parentheses in a message, 302 staged lines: blocked",
+          blocked('git commit -m "fix {braces} (and parens)"'))
+    git(repo, "reset", "-q")
+    os.remove(os.path.join(repo, "big.txt"))
+    write(repo, "small.txt", 1)
+    write(repo, "a.txt", 1)
+    git(repo, "add", "a.txt"); git(repo, "commit", "-qm", "a")
+    write(repo, "a.txt", 300, "z")
+    got = calls('git commit -m "fix: handle (x) case" a.txt')
+    check("a path after a message with parentheses is the pathspec", got and commit_shape(got[0])[2] == ["a.txt"], got)
+    check("... and its 300 changed lines block", blocked('git commit -m "fix: handle (x) case" a.txt'))
+    write(repo, "a.txt", 1)
+    # a stray quote is not a reason to count the whole tree; a magic fragment that keeps its quote still is
+    write(repo, "st.txt", 300)
+    git(repo, "add", "st.txt")
+    if os.path.exists(errlog):
+        os.remove(errlog)
+    n = commit_lines(repo, (False, False, ['"x'], False), [])
+    check("a pathspec with a stray quote is left out (the index counts, 300) and logged",
+          n == 300 and errlog_has("stray quote"), n)
+    git(repo, "reset", "-q")
+    os.remove(os.path.join(repo, "st.txt"))
+    n = commit_lines(repo, (False, False, ["':(top)sub/s.py"], False), [])
+    check("a magic fragment that keeps its opening quote counts the whole tree (160)", n == 160, n)
+    n = commit_lines(repo, (False, False, ['"x', "a.txt"], False), [])
+    check("a stray quote beside a real path: only the real path counts (a.txt unchanged: 0)", n == 0, n)
+    # adds the hook cannot resolve count as `git add -A`; a runner's later `git add` is counted
+    write(repo, "n.txt", 300)
+    write(repo, "ok.txt", 20)
+    for cmd in ("for f in n.txt; do git add $f; done; git commit -m x", 'f=n.txt; git add "$f" && git commit -m x',
+                "git add ${f} && git commit -m x", "Get-ChildItem n.txt | ForEach-Object { git add $_ }; git commit -m x",
+                "find . -name n.txt -exec git add {} \\; && git commit -m x", "ls n.txt | xargs -I{} git add {} && "
+                "git commit -m x", "ls n.txt | xargs git add && git commit -m x", "git add $(ls n.txt) && git commit -m x",
+                "git add `ls n.txt` && git commit -m x", "git add %F% && git commit -m x",
+                "env -i git add n.txt && git commit -m x"):
+        check("an add the hook cannot resolve counts as git add -A: blocked " + repr(cmd), blocked(cmd))
+    for cmd, want in (("git add $(ls n.txt) && git commit -m x", True), ("env -i git add n.txt && git commit -m x", False)):
+        if os.path.exists(errlog):
+            os.remove(errlog)
+        blocked(cmd)
+        check("an unresolved add is logged, a literal one is not: " + repr(cmd), errlog_has("cannot resolve") == want)
+    check("control: a literal add + commit of a small file is allowed", not blocked("git add ok.txt && git commit -m x"))
+    check("control: a later `git add` word without a runner before it is not counted",
+          not blocked("echo git add n.txt; git commit -m x"))
+    check("control: an add that a CLOSING backtick ends is literal (20 lines: allowed)",
+          not blocked("echo `git add ok.txt`; git commit -m x"))
+    cmd = "for i in 1; do git add ok.txt; done; git commit -m x"
+    cs = list(git_calls(cmd, repo, count=True))
+    n = commit_lines(repo, commit_shape(cs[-1][1]), commit_adds(cs, len(cs) - 1, repo, {}))
+    check("a literal add in a loop keeps its exact count (20)", n == 20 and not blocked(cmd), n)
+    got = calls("find . -name n.txt -exec git add {} \\;") + calls("ls | xargs git add")
+    check("the discard rules' reading is unchanged: no later-word git, no added word", got == [["add"]], got)
+    for f in ("n.txt", "ok.txt"):
+        os.remove(os.path.join(repo, f))
 
 
 def audit_line(data, cmd):
